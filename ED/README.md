@@ -50,10 +50,13 @@ python hubbard_ed.py --L 6 --U 2.0 --save results_L6_U2.txt
 
 ## Comparing QMC and ED
 
+### Single Point Comparison
+
 Use the comparison script to benchmark QMC against exact ED:
 
 ```bash
 cd ED
+source .venv/bin/activate
 python compare_qmc_ed.py --L 4 --U 4.0 --mu 0.0
 ```
 
@@ -62,6 +65,36 @@ This will:
 2. Run QMC simulation
 3. Compare all observables (energy, particle number, structure factors)
 4. Report agreement and check for sign problem
+
+### Plotting Energy vs U
+
+Generate comparison plots across multiple U values:
+
+```bash
+cd ED
+source .venv/bin/activate
+python plot_comparison.py --L 4 --U-min 0.0 --U-max 8.0 --U-step 2.0
+```
+
+This creates a figure with 4 subplots:
+- Energy comparison (QMC vs ED)
+- Absolute error (QMC - ED)
+- Relative error (%)
+- QMC sign problem indicator
+
+Output: `energy_comparison.png`
+
+**Options:**
+```bash
+# Custom U range
+python plot_comparison.py --L 4 --U-min 0 --U-max 10 --U-step 1.0
+
+# More QMC statistics
+python plot_comparison.py --L 4 --evaluationLength 5000
+
+# Different system size
+python plot_comparison.py --L 6 --U-max 6.0
+```
 
 ## Quick Test
 
@@ -93,12 +126,12 @@ ED scales exponentially with system size:
 
 ## Observables
 
-1. **Energy**: Ground state energy E€
-2. **Particle numbers**: èN‘é, èN“é, èNé
-3. **Spin structure factor S(À)**: Antiferromagnetic correlations
-4. **Charge structure factor N(À)**: Charge density wave
-5. **Double occupancy**: èn‘ n“é
-6. **NN spin correlation**: èS·Sé
+1. **Energy**: Ground state energy Eï¿½
+2. **Particle numbers**: ï¿½Nï¿½ï¿½, ï¿½Nï¿½ï¿½, ï¿½Nï¿½
+3. **Spin structure factor S(ï¿½)**: Antiferromagnetic correlations
+4. **Charge structure factor N(ï¿½)**: Charge density wave
+5. **Double occupancy**: ï¿½nï¿½ nï¿½ï¿½
+6. **NN spin correlation**: ï¿½Sï¿½Sï¿½
 
 ## References
 

@@ -10,6 +10,11 @@ output/*.out
 output/*.txt
 results_*.txt
 
+# Plot files
+*.png
+*.pdf
+*.svg
+
 # Temporary files
 *.tmp
 *.bak
