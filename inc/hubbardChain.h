@@ -208,8 +208,8 @@ class HubbardChainUtils : public SpinlessTvUtils {
             for (int ispin = 0; ispin < 2; ispin++) {
                 idx1 = majoranaCoord2Idx(i, ispin, 0);
                 idx2 = majoranaCoord2Idx(i, ispin, 1);
-                // <n_{i,σ}> = 1/2 - i/2 <γ^1_{i,σ} γ^2_{i,σ}>
-                n_total += 0.5 * (1.0 - (1.0i) * g(idx1, idx2));
+                // <n_{i,σ}> = 1/2 + i/2 <γ^1_{i,σ} γ^2_{i,σ}>
+                n_total += 0.5 * (1.0 + (1.0i) * g(idx1, idx2));
             }
         }
 
