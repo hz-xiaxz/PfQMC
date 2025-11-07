@@ -103,17 +103,17 @@ class HubbardChainUtils : public SpinlessTvUtils {
 
         for (int i = 0; i < L_bonds; i++) {
             for (int ispin = 0; ispin < 2; ispin++) {
-                // γ^1_{i,σ} γ^2_{i+1,σ} term
+                // -γ^1_{i,σ} γ^2_{i+1,σ} term (from -(it/2) γ¹ γ²)
                 idx1 = majoranaCoord2Idx(i, ispin, 0);
                 idx2 = majoranaCoord2Idx((i + 1) % Lx, ispin, 1);
-                H(idx1, idx2) += tmp;
-                H(idx2, idx1) += -tmp;
-
-                // -γ^2_{i,σ} γ^1_{i+1,σ} term
-                idx1 = majoranaCoord2Idx(i, ispin, 1);
-                idx2 = majoranaCoord2Idx((i + 1) % Lx, ispin, 0);
                 H(idx1, idx2) += -tmp;
                 H(idx2, idx1) += +tmp;
+
+                // +γ^2_{i,σ} γ^1_{i+1,σ} term (from +(it/2) γ² γ¹)
+                idx1 = majoranaCoord2Idx(i, ispin, 1);
+                idx2 = majoranaCoord2Idx((i + 1) % Lx, ispin, 0);
+                H(idx1, idx2) += +tmp;
+                H(idx2, idx1) += -tmp;
             }
         }
 
