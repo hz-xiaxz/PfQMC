@@ -88,8 +88,8 @@ class HubbardChainUtils : public SpinlessTvUtils {
      * H_kinetic = -t Σ_{i,σ} (c†_{i,σ} c_{i+1,σ} + h.c.) - μ Σ_{i,σ} n_{i,σ}
      *
      * In Majorana basis:
-     * Hopping: -t (c†_{i,σ} c_{i+1,σ} + h.c.) = i·t/2 (γ^1_{i,σ} γ^2_{i+1,σ} - γ^2_{i,σ} γ^1_{i+1,σ})
-     * Chemical potential: -μ n_{i,σ} = -μ/2 (1 - i γ^1_{i,σ} γ^2_{i,σ})
+     * Hopping: -t (c†_{i,σ} c_{i+1,σ} + h.c.) = -(it/2) (γ^1_{i,σ} γ^2_{i+1,σ} - γ^2_{i,σ} γ^1_{i+1,σ})
+     * Chemical potential: -μ n_{i,σ} = -μ/2 (1 + i γ^1_{i,σ} γ^2_{i,σ})
      */
     inline void KineticGenerator(MatType &H) const {
         H.setZero();
@@ -98,7 +98,7 @@ class HubbardChainUtils : public SpinlessTvUtils {
         DataType tmpMu = (0.5i) * mu; // Factor for chemical potential
 
         // Hopping term: -t Σ_{i,σ} (c†_{i,σ} c_{i+1,σ} + h.c.)
-        // In Majorana: i·t/2 (γ^1_{i,σ} γ^2_{i+1,σ} - γ^2_{i,σ} γ^1_{i+1,σ})
+        // In Majorana: -(it/2) (γ^1_{i,σ} γ^2_{i+1,σ} - γ^2_{i,σ} γ^1_{i+1,σ})
         int L_bonds = (boundaryType == 0) ? Lx : (Lx - 1); // PBC: Lx bonds, OBC: Lx-1 bonds
 
         for (int i = 0; i < L_bonds; i++) {
@@ -117,7 +117,7 @@ class HubbardChainUtils : public SpinlessTvUtils {
             }
         }
 
-        // Chemical potential term: -μ Σ_{i,σ} n_{i,σ} = -μ/2 Σ_{i,σ} (1 - i γ^1_{i,σ} γ^2_{i,σ})
+        // Chemical potential term: -μ Σ_{i,σ} n_{i,σ} = -μ/2 Σ_{i,σ} (1 + i γ^1_{i,σ} γ^2_{i,σ})
         // Only the i γ^1_{i,σ} γ^2_{i,σ} part contributes to H (constant part drops out)
         for (int i = 0; i < Lx; i++) {
             for (int ispin = 0; ispin < 2; ispin++) {
@@ -165,8 +165,8 @@ class HubbardChainUtils : public SpinlessTvUtils {
         }
 
         // Interaction energy: U Σ_i <n_{i,↑} n_{i,↓}>
-        // n_{i,σ} = (1 - i γ^1_{i,σ} γ^2_{i,σ}) / 2
-        // n_{i,↑} n_{i,↓} = [1 - i(γ^1_{i,↑} γ^2_{i,↑} + γ^1_{i,↓} γ^2_{i,↓})
+        // n_{i,σ} = (1 + i γ^1_{i,σ} γ^2_{i,σ}) / 2
+        // n_{i,↑} n_{i,↓} = [1 + i(γ^1_{i,↑} γ^2_{i,↑} + γ^1_{i,↓} γ^2_{i,↓})
         //                     - γ^1_{i,↑} γ^2_{i,↑} γ^1_{i,↓} γ^2_{i,↓}] / 4
         int idxu1, idxu2, idxd1, idxd2;
         DataType tmpU = 0.25 * U;
@@ -180,8 +180,8 @@ class HubbardChainUtils : public SpinlessTvUtils {
             idxd1 = majoranaCoord2Idx(i, 1, 0); // γ^1_{i,↓}
             idxd2 = majoranaCoord2Idx(i, 1, 1); // γ^2_{i,↓}
 
-            // Two-point terms: -U/4 (<i γ^1_↑ γ^2_↑> + <i γ^1_↓ γ^2_↓>)
-            r -= tmpU * (1.0i) * (g(idxu1, idxu2) + g(idxd1, idxd2));
+            // Two-point terms: +U/4 i (<γ^1_↑ γ^2_↑> + <γ^1_↓ γ^2_↓>)
+            r += tmpU * (1.0i) * (g(idxu1, idxu2) + g(idxd1, idxd2));
 
             // <n_{i,↑} n_{i,↓}> four-point term with ALL Wick contractions
             // Following Kitaev chain pattern (kitaevChain.h:386-388): signs are +, +, -
