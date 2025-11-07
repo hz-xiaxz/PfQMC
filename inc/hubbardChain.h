@@ -215,91 +215,92 @@ class HubbardChainUtils : public SpinlessTvUtils {
 
         return n_total;
     }
+};
 
     /**
      * Spin structure factor S(q) = (1/L) Σ_{i,j} e^{iq(i-j)} <S^z_i S^z_j>
      * where S^z_i = (n_{i,↑} - n_{i,↓}) / 2
      */
-    inline DataType spinStructureFactor(const MatType &g, double q) const {
-        DataType Sq = 0.0;
+    // inline DataType spinStructureFactor(const MatType &g, double q) const {
+    //     DataType Sq = 0.0;
 
-        for (int i = 0; i < Lx; i++) {
-            for (int j = 0; j < Lx; j++) {
-                int idxu1_i = majoranaCoord2Idx(i, 0, 0);
-                int idxu2_i = majoranaCoord2Idx(i, 0, 1);
-                int idxd1_i = majoranaCoord2Idx(i, 1, 0);
-                int idxd2_i = majoranaCoord2Idx(i, 1, 1);
+    //     for (int i = 0; i < Lx; i++) {
+    //         for (int j = 0; j < Lx; j++) {
+    //             int idxu1_i = majoranaCoord2Idx(i, 0, 0);
+    //             int idxu2_i = majoranaCoord2Idx(i, 0, 1);
+    //             int idxd1_i = majoranaCoord2Idx(i, 1, 0);
+    //             int idxd2_i = majoranaCoord2Idx(i, 1, 1);
 
-                int idxu1_j = majoranaCoord2Idx(j, 0, 0);
-                int idxu2_j = majoranaCoord2Idx(j, 0, 1);
-                int idxd1_j = majoranaCoord2Idx(j, 1, 0);
-                int idxd2_j = majoranaCoord2Idx(j, 1, 1);
+    //             int idxu1_j = majoranaCoord2Idx(j, 0, 0);
+    //             int idxu2_j = majoranaCoord2Idx(j, 0, 1);
+    //             int idxd1_j = majoranaCoord2Idx(j, 1, 0);
+    //             int idxd2_j = majoranaCoord2Idx(j, 1, 1);
 
-                // S^z_i = (n_{i,↑} - n_{i,↓}) / 2
-                // <S^z_i S^z_j> = (1/4)[<n↑n↑> - <n↑n↓> - <n↓n↑> + <n↓n↓>]
-                // Only connected Wick contractions (exclude disconnected diagrams)
+    //             // S^z_i = (n_{i,↑} - n_{i,↓}) / 2
+    //             // <S^z_i S^z_j> = (1/4)[<n↑n↑> - <n↑n↓> - <n↓n↑> + <n↓n↓>]
+    //             // Only connected Wick contractions (exclude disconnected diagrams)
 
-                DataType block_upup = -g(idxu1_i, idxu1_j) * g(idxu2_i, idxu2_j)
-                                     + g(idxu1_i, idxu2_j) * g(idxu2_i, idxu1_j);
-                DataType block_updn = -g(idxu1_i, idxd1_j) * g(idxu2_i, idxd2_j)
-                                     + g(idxu1_i, idxd2_j) * g(idxu2_i, idxd1_j);
-                DataType block_dnup = -g(idxd1_i, idxu1_j) * g(idxd2_i, idxu2_j)
-                                     + g(idxd1_i, idxu2_j) * g(idxd2_i, idxu1_j);
-                DataType block_dndn = -g(idxd1_i, idxd1_j) * g(idxd2_i, idxd2_j)
-                                     + g(idxd1_i, idxd2_j) * g(idxd2_i, idxd1_j);
+    //             DataType block_upup = -g(idxu1_i, idxu1_j) * g(idxu2_i, idxu2_j)
+    //                                  + g(idxu1_i, idxu2_j) * g(idxu2_i, idxu1_j);
+    //             DataType block_updn = -g(idxu1_i, idxd1_j) * g(idxu2_i, idxd2_j)
+    //                                  + g(idxu1_i, idxd2_j) * g(idxu2_i, idxd1_j);
+    //             DataType block_dnup = -g(idxd1_i, idxu1_j) * g(idxd2_i, idxu2_j)
+    //                                  + g(idxd1_i, idxu2_j) * g(idxd2_i, idxu1_j);
+    //             DataType block_dndn = -g(idxd1_i, idxd1_j) * g(idxd2_i, idxd2_j)
+    //                                  + g(idxd1_i, idxd2_j) * g(idxd2_i, idxd1_j);
 
-                // Spin: +upup -updn -dnup +dndn
-                DataType corr = 0.25 * (block_upup - block_updn - block_dnup + block_dndn);
+    //             // Spin: +upup -updn -dnup +dndn
+    //             DataType corr = 0.25 * (block_upup - block_updn - block_dnup + block_dndn);
 
-                Sq += corr * exp(1.0i * q * double(i - j));
-            }
-        }
+    //             Sq += corr * exp(1.0i * q * double(i - j));
+    //         }
+    //     }
 
-        return Sq / double(Lx);
-    }
+    //     return Sq / double(Lx);
+    // }
 
     /**
      * Charge structure factor N(q) = (1/L) Σ_{i,j} e^{iq(i-j)} <n_i n_j>
      * where n_i = n_{i,↑} + n_{i,↓}
      */
-    inline DataType chargeStructureFactor(const MatType &g, double q) const {
-        DataType Nq = 0.0;
+//     inline DataType chargeStructureFactor(const MatType &g, double q) const {
+//         DataType Nq = 0.0;
 
-        for (int i = 0; i < Lx; i++) {
-            for (int j = 0; j < Lx; j++) {
-                // Similar calculation as spin structure factor but with n_i = n_{i,↑} + n_{i,↓}
-                int idxu1_i = majoranaCoord2Idx(i, 0, 0);
-                int idxu2_i = majoranaCoord2Idx(i, 0, 1);
-                int idxd1_i = majoranaCoord2Idx(i, 1, 0);
-                int idxd2_i = majoranaCoord2Idx(i, 1, 1);
+//         for (int i = 0; i < Lx; i++) {
+//             for (int j = 0; j < Lx; j++) {
+//                 // Similar calculation as spin structure factor but with n_i = n_{i,↑} + n_{i,↓}
+//                 int idxu1_i = majoranaCoord2Idx(i, 0, 0);
+//                 int idxu2_i = majoranaCoord2Idx(i, 0, 1);
+//                 int idxd1_i = majoranaCoord2Idx(i, 1, 0);
+//                 int idxd2_i = majoranaCoord2Idx(i, 1, 1);
 
-                int idxu1_j = majoranaCoord2Idx(j, 0, 0);
-                int idxu2_j = majoranaCoord2Idx(j, 0, 1);
-                int idxd1_j = majoranaCoord2Idx(j, 1, 0);
-                int idxd2_j = majoranaCoord2Idx(j, 1, 1);
+//                 int idxu1_j = majoranaCoord2Idx(j, 0, 0);
+//                 int idxu2_j = majoranaCoord2Idx(j, 0, 1);
+//                 int idxd1_j = majoranaCoord2Idx(j, 1, 0);
+//                 int idxd2_j = majoranaCoord2Idx(j, 1, 1);
 
-                // <n_i n_j> = <n↑n↑> + <n↑n↓> + <n↓n↑> + <n↓n↓>
-                // Only connected Wick contractions (exclude disconnected diagrams)
+//                 // <n_i n_j> = <n↑n↑> + <n↑n↓> + <n↓n↑> + <n↓n↓>
+//                 // Only connected Wick contractions (exclude disconnected diagrams)
 
-                DataType block_upup = -g(idxu1_i, idxu1_j) * g(idxu2_i, idxu2_j)
-                                     + g(idxu1_i, idxu2_j) * g(idxu2_i, idxu1_j);
-                DataType block_updn = -g(idxu1_i, idxd1_j) * g(idxu2_i, idxd2_j)
-                                     + g(idxu1_i, idxd2_j) * g(idxu2_i, idxd1_j);
-                DataType block_dnup = -g(idxd1_i, idxu1_j) * g(idxd2_i, idxu2_j)
-                                     + g(idxd1_i, idxu2_j) * g(idxd2_i, idxu1_j);
-                DataType block_dndn = -g(idxd1_i, idxd1_j) * g(idxd2_i, idxd2_j)
-                                     + g(idxd1_i, idxd2_j) * g(idxd2_i, idxd1_j);
+//                 DataType block_upup = -g(idxu1_i, idxu1_j) * g(idxu2_i, idxu2_j)
+//                                      + g(idxu1_i, idxu2_j) * g(idxu2_i, idxu1_j);
+//                 DataType block_updn = -g(idxu1_i, idxd1_j) * g(idxu2_i, idxd2_j)
+//                                      + g(idxu1_i, idxd2_j) * g(idxu2_i, idxd1_j);
+//                 DataType block_dnup = -g(idxd1_i, idxu1_j) * g(idxd2_i, idxu2_j)
+//                                      + g(idxd1_i, idxu2_j) * g(idxd2_i, idxu1_j);
+//                 DataType block_dndn = -g(idxd1_i, idxd1_j) * g(idxd2_i, idxd2_j)
+//                                      + g(idxd1_i, idxd2_j) * g(idxd2_i, idxd1_j);
 
-                // Charge: +upup +updn +dnup +dndn (ALL added)
-                DataType corr = 0.25 * (block_upup + block_updn + block_dnup + block_dndn);
+//                 // Charge: +upup +updn +dnup +dndn (ALL added)
+//                 DataType corr = 0.25 * (block_upup + block_updn + block_dnup + block_dndn);
 
-                Nq += corr * exp(1.0i * q * double(i - j));
-            }
-        }
+//                 Nq += corr * exp(1.0i * q * double(i - j));
+//             }
+//         }
 
-        return Nq / double(Lx);
-    }
-};
+//         return Nq / double(Lx);
+//     }
+// };
 
 /**
  * HubbardChain_tU: Walker class for 1D Hubbard model
