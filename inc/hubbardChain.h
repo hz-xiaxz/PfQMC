@@ -15,7 +15,7 @@
  * Majorana representation:
  * - Each site i has 4 Majorana modes: γ^1_{i,↑}, γ^2_{i,↑}, γ^1_{i,↓}, γ^2_{i,↓}
  * - Fermion operator: c_{i,σ} = (γ^1_{i,σ} + i γ^2_{i,σ}) / 2
- * - Density: n_{i,σ} = c†_{i,σ} c_{i,σ} = (1 - i γ^1_{i,σ} γ^2_{i,σ}) / 2
+ * - Density: n_{i,σ} = c†_{i,σ} c_{i,σ} = (1 + i γ^1_{i,σ} γ^2_{i,σ}) / 2
  *
  * System dimension: nDim = 4 * Lx (4 Majorana modes per site)
  */
@@ -154,7 +154,7 @@ class HubbardChainUtils : public SpinlessTvUtils {
                 r -= tmp * g(idx1, idx2);
             }
         }
-        r -= mu * double(Lx)
+        r -= mu * double(Lx);
         // Chemical potential: -μ Σ_{i,σ} <n_{i,σ}>
         for (int i = 0; i < Lx; i++) {
             for (int ispin = 0; ispin < 2; ispin++) {
