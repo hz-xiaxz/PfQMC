@@ -154,7 +154,7 @@ class HubbardChainUtils : public SpinlessTvUtils {
                 r -= tmp * g(idx1, idx2);
             }
         }
-
+        r -= mu * double(Lx)
         // Chemical potential: -μ Σ_{i,σ} <n_{i,σ}>
         for (int i = 0; i < Lx; i++) {
             for (int ispin = 0; ispin < 2; ispin++) {
