@@ -8,6 +8,7 @@
 #include "inc/square.h"
 #include "inc/singleMajoranaHoneycomb.h"
 #include "inc/kitaevChain.h"
+#include "inc/hubbardChain.h"
 
 void fixSign(DataType& sign, DataType signRaw, double threshold) {
     // unreliable signRaw
@@ -369,9 +370,101 @@ int main_chain(int Lx, int LTau, double dt, double V, double delta,int nthreads,
 }
 
 
+int main_hubbard(int Lx, int LTau, double dt, double U, int nthreads, int nseed, int evaluationLength, char* filename, double mu=0.0, int hsScheme=0, int boundary=1) {
+    double start_time = omp_get_wtime();
+    mkl_set_num_threads(nthreads);
+
+    std::fstream fout(filename, std::fstream::out);
+
+    int stabilizationTime = 10;
+    int thermalLength = 1000;
+
+    fout << "=== 1D Hubbard Model with chemical potential mu = " << mu << " ===\n";
+    fout << "Lx = " << Lx << " LTau = " << LTau << " dt = " << dt << " U = " << U << " seed = " << nseed << " nthreads = " << nthreads
+         << " mu = " << mu << " boundary = " << boundary << " hsScheme = " << hsScheme << " evaluationLength = " << evaluationLength << std::endl;
+
+    HubbardChainUtils config(Lx, dt, U, LTau, boundary, mu, hsScheme);
+    rdGenerator rd(nseed);
+    HubbardChain_tU walker(&config, &rd);
+    PfQMC pfqmc(&walker, stabilizationTime);
+
+    fout << "Thermalization:" << std::endl;
+    for (int i = 0; i < thermalLength; i++) {
+        fout << i << " " << std::flush;
+        pfqmc.rightSweep();
+        pfqmc.leftSweep();
+    }
+    fout << std::endl;
+
+    DataType sign, signRaw;
+    DataType obsEnergy, obsParticleNumber;
+    DataType obsSpinSF_pi, obsChargeSF_pi;
+
+    DataType obsEnergyTot = 0.0;
+    DataType obsSignTotTrue = 0.0;
+    DataType obsParticleNumberTot = 0.0;
+    DataType obsSpinSF_piTot = 0.0;
+    DataType obsChargeSF_piTot = 0.0;
+
+    double q_pi = M_PI; // momentum at π
+
+    for (int i = 0; i < evaluationLength; i++) {
+        pfqmc.rightSweep();
+        pfqmc.leftSweep();
+        sign = pfqmc.sign;
+
+        // Periodically check and fix sign
+        if (i % 20 == 0) {
+            signRaw = pfqmc.getSignRaw();
+            double threshold = 1e-2;
+            if (std::abs(sign - signRaw) > threshold) {
+                fixSign(sign, signRaw, threshold);
+                pfqmc.sign = sign;
+            }
+        }
+
+        // Measure observables
+        obsEnergy = config.energyFromGreensFunc(pfqmc.g);
+        obsParticleNumber = config.particleNumber(pfqmc.g);
+        obsSpinSF_pi = config.spinStructureFactor(pfqmc.g, q_pi);
+        obsChargeSF_pi = config.chargeStructureFactor(pfqmc.g, q_pi);
+
+        // Accumulate with sign reweighting
+        obsEnergyTot += sign * obsEnergy;
+        obsSignTotTrue += sign;
+        obsParticleNumberTot += sign * obsParticleNumber;
+        obsSpinSF_piTot += sign * obsSpinSF_pi;
+        obsChargeSF_piTot += sign * obsChargeSF_pi;
+
+        // Output each iteration
+        fout << "iter = " << i
+             << " sign = " << sign
+             << " energy = " << obsEnergy
+             << " N = " << obsParticleNumber
+             << " S(π) = " << obsSpinSF_pi
+             << " N(π) = " << obsChargeSF_pi
+             << std::endl;
+
+        if (i == evaluationLength - 1) {
+            std::cout << filename << " finished" << std::endl;
+            std::cout << "AveEnergy = " << obsEnergyTot / obsSignTotTrue
+                      << " AveSign = " << obsSignTotTrue / double(evaluationLength)
+                      << " AveN = " << obsParticleNumberTot / obsSignTotTrue
+                      << " AveS(π) = " << obsSpinSF_piTot / obsSignTotTrue
+                      << " AveN(π) = " << obsChargeSF_piTot / obsSignTotTrue
+                      << std::endl;
+        }
+    }
+
+    double time = omp_get_wtime() - start_time;
+    fout << "=== End of 1D Hubbard Model ===\n";
+    fout << "total time " << time << std::endl;
+    return 0;
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cout << "Usage: " << argv[0] << " --square | --honeycomb | --MRhoneycomb [PARAMS]\n";
+        std::cout << "Usage: " << argv[0] << " --square | --honeycomb | --MRhoneycomb | --chain | --hubbard [PARAMS]\n";
         return 0;
     }
 
@@ -459,6 +552,59 @@ int main(int argc, char* argv[]) {
         mu = std::stod(argv[11]);
         ok = main_chain(Lx, LTau, dt, V, delta, nthreads, nseeds[myid], evaluationLength, filename, mu, hsScheme, boundary);
         // }
+    } else if (std::strcmp(argv[1], "--hubbard") == 0) {
+        if (argc < 13) {
+            std::cout << "Usage for --hubbard:\n";
+            std::cout << argv[0] << " --hubbard Lx LTau dt U nthreads nseed evaluationLength filepath mu hsScheme boundary\n";
+            std::cout << "\nParameters:\n";
+            std::cout << "  Lx             : Number of sites (e.g., 4, 6, 8)\n";
+            std::cout << "  LTau           : Number of time slices (e.g., 100, 200)\n";
+            std::cout << "  dt             : Time step (e.g., 0.1)\n";
+            std::cout << "  U              : On-site interaction strength (e.g., 2.0, 4.0)\n";
+            std::cout << "  nthreads       : Number of OpenMP threads (e.g., 8)\n";
+            std::cout << "  nseed          : Random seed (e.g., 42)\n";
+            std::cout << "  evaluationLength : Number of measurement sweeps (e.g., 1000, 5000)\n";
+            std::cout << "  filepath       : Output directory (must end with /, e.g., ./output/)\n";
+            std::cout << "  mu             : Chemical potential (e.g., 0.0 for half-filling)\n";
+            std::cout << "  hsScheme       : Hubbard-Stratonovich scheme (0 or 1)\n";
+            std::cout << "  boundary       : Boundary condition (0=PBC, 1=OBC)\n";
+            std::cout << "\nExample:\n";
+            std::cout << "  mpirun -np 4 " << argv[0] << " --hubbard 8 200 0.1 4.0 8 42 5000 ./ 0.0 0 1\n";
+            return 0;
+        }
+
+        int Lx, LTau, nthreads, nseed, evaluationLength, hsScheme, boundary;
+        double dt, U, mu;
+        char* filepath;
+        char filename[100];
+
+        Lx = std::stoi(argv[2]);
+        LTau = std::stoi(argv[3]);
+        dt = std::stod(argv[4]);
+        U = std::stod(argv[5]);
+        nthreads = std::stoi(argv[6]);
+        nseed = std::stoi(argv[7]);
+        evaluationLength = std::stoi(argv[8]);
+        filepath = argv[9];
+        mu = std::stod(argv[10]);
+        hsScheme = std::stoi(argv[11]);
+        boundary = std::stoi(argv[12]);
+
+        int numprocs, myid;
+        MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
+        MPI_Comm_rank(MPI_COMM_WORLD, &myid);
+
+        srand(nseed);
+        int nseeds[numprocs];
+        for (int i = 0; i < numprocs; i++) {
+            nseeds[i] = rand();
+        }
+
+        // filename = "hubbard-Lx-Ltau-dt-U-myid-seed-mu-BC.out"
+        sprintf(filename, "%shubbard-%d-%d-%.2lf-%.2lf-%d-%d-%.2lf-BC=%d.out",
+            filepath, Lx, LTau, dt, U, myid, nseeds[myid], mu, boundary);
+        std::cout << "filename = " << filename << std::endl;
+        ok = main_hubbard(Lx, LTau, dt, U, nthreads, nseeds[myid], evaluationLength, filename, mu, hsScheme, boundary);
     } else {
         std::cout << argv[1] << ": invalid arguments\n";
         ok = 0;

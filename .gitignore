@@ -14,3 +14,5 @@ slurm-**.out
 **.pl
 **.sh
 doc/
+Makefile
+_research/
