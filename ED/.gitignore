@@ -1,0 +1,16 @@
+# Python virtual environment
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Output files
+output/*.out
+output/*.txt
+results_*.txt
+
+# Temporary files
+*.tmp
+*.bak
+*~
