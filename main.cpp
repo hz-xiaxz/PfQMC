@@ -2,6 +2,7 @@
 #include <omp.h>
 #include <string.h>
 #include <fstream>
+#include <iomanip>
 
 #include "inc/honeycomb.h"
 #include "inc/pfqmc.h"
@@ -398,13 +399,10 @@ int main_hubbard(int Lx, int LTau, double dt, double U, int nthreads, int nseed,
 
     DataType sign, signRaw;
     DataType obsEnergy, obsParticleNumber;
-    DataType obsSpinSF_pi, obsChargeSF_pi;
 
     DataType obsEnergyTot = 0.0;
     DataType obsSignTotTrue = 0.0;
     DataType obsParticleNumberTot = 0.0;
-    DataType obsSpinSF_piTot = 0.0;
-    DataType obsChargeSF_piTot = 0.0;
 
     double q_pi = M_PI; // momentum at π
 
@@ -426,23 +424,17 @@ int main_hubbard(int Lx, int LTau, double dt, double U, int nthreads, int nseed,
         // Measure observables
         obsEnergy = config.energyFromGreensFunc(pfqmc.g);
         obsParticleNumber = config.particleNumber(pfqmc.g);
-        obsSpinSF_pi = config.spinStructureFactor(pfqmc.g, q_pi);
-        obsChargeSF_pi = config.chargeStructureFactor(pfqmc.g, q_pi);
 
         // Accumulate with sign reweighting
         obsEnergyTot += sign * obsEnergy;
         obsSignTotTrue += sign;
         obsParticleNumberTot += sign * obsParticleNumber;
-        obsSpinSF_piTot += sign * obsSpinSF_pi;
-        obsChargeSF_piTot += sign * obsChargeSF_pi;
 
         // Output each iteration
         fout << "iter = " << i
              << " sign = " << sign
              << " energy = " << obsEnergy
              << " N = " << obsParticleNumber
-             << " S(π) = " << obsSpinSF_pi
-             << " N(π) = " << obsChargeSF_pi
              << std::endl;
 
         if (i == evaluationLength - 1) {
@@ -450,8 +442,6 @@ int main_hubbard(int Lx, int LTau, double dt, double U, int nthreads, int nseed,
             std::cout << "AveEnergy = " << obsEnergyTot / obsSignTotTrue
                       << " AveSign = " << obsSignTotTrue / double(evaluationLength)
                       << " AveN = " << obsParticleNumberTot / obsSignTotTrue
-                      << " AveS(π) = " << obsSpinSF_piTot / obsSignTotTrue
-                      << " AveN(π) = " << obsChargeSF_piTot / obsSignTotTrue
                       << std::endl;
         }
     }
