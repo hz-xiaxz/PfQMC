@@ -179,7 +179,7 @@ class HubbardChainUtils : public SpinlessTvUtils {
             idxd2 = majoranaCoord2Idx(i, 1, 1); // γ^2_{i,↓}
 
             // Two-point terms: -U/4 (<i γ^1_↑ γ^2_↑> + <i γ^1_↓ γ^2_↓>)
-            r -= tmpU * (1.0i) * (g(idxu1, idxu2) + g(idxd1, idxd2));
+            // r -= tmpU * (1.0i) * (g(idxu1, idxu2) + g(idxd1, idxd2));
 
             // <n_{i,↑} n_{i,↓}> four-point term with ALL Wick contractions
             // Following Kitaev chain pattern (kitaevChain.h:386-388): signs are +, +, -
@@ -207,7 +207,7 @@ class HubbardChainUtils : public SpinlessTvUtils {
                 idx1 = majoranaCoord2Idx(i, ispin, 0);
                 idx2 = majoranaCoord2Idx(i, ispin, 1);
                 // <n_{i,σ}> = 1/2 + i/2 <γ^1_{i,σ} γ^2_{i,σ}>
-                n_total += 0.5 * (1.0 - (1.0i) * g(idx1, idx2));
+                n_total += 0.5 * (1.0 + (1.0i) * g(idx1, idx2));
             }
         }
 
