@@ -377,7 +377,7 @@ int main_hubbard(int Lx, int LTau, double dt, double U, int nthreads, int nseed,
     std::fstream fout(filename, std::fstream::out);
 
     int stabilizationTime = 10;
-    int thermalLength = 1000;
+    int thermalLength = 100;
 
     fout << "=== 1D Hubbard Model with chemical potential mu = " << mu << " ===\n";
     fout << "Lx = " << Lx << " LTau = " << LTau << " dt = " << dt << " U = " << U << " seed = " << nseed << " nthreads = " << nthreads
