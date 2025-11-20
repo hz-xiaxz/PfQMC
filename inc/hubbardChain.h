@@ -5,7 +5,6 @@
 #include "skewMatUtils.h"
 #include "spinless_tV.h"
 #include "types.h"
-#include <iostream>
 
 /**
  * 1D Hubbard Model in Majorana Representation
@@ -15,7 +14,7 @@
  * Majorana representation:
  * - Each site i has 4 Majorana modes: γ^1_{i,↑}, γ^2_{i,↑}, γ^1_{i,↓}, γ^2_{i,↓}
  * - Fermion operator: c_{i,σ} = (γ^1_{i,σ} + i γ^2_{i,σ}) / 2
- * - Density: n_{i,σ} = c†_{i,σ} c_{i,σ} = (1 - i γ^1_{i,σ} γ^2_{i,σ}) / 2
+ * - Density: n_{i,σ} = c†_{i,σ} c_{i,σ} = (1 + i γ^1_{i,σ} γ^2_{i,σ}) / 2
  *
  * System dimension: nDim = 4 * Lx (4 Majorana modes per site)
  */
@@ -37,7 +36,6 @@ class HubbardChainUtils : public SpinlessTvUtils {
 
         // Recompute HS parameters for on-site interaction
         // For on-site U interaction, we use same HS transformation structure
-        // Testing factor = 0.25 based on analysis
         lambdaV = acosh(exp(0.25 * U * dt));
         chlV = cosh(lambdaV);
         shlV = sinh(lambdaV);
@@ -89,7 +87,7 @@ class HubbardChainUtils : public SpinlessTvUtils {
      *
      * In Majorana basis:
      * Hopping: -t (c†_{i,σ} c_{i+1,σ} + h.c.) = i·t/2 (γ^1_{i,σ} γ^2_{i+1,σ} - γ^2_{i,σ} γ^1_{i+1,σ})
-     * Chemical potential: -μ n_{i,σ} = -μ/2 (1 - i γ^1_{i,σ} γ^2_{i,σ})
+     * Chemical potential: -μ n_{i,σ} = -μ/2 (1 + i γ^1_{i,σ} γ^2_{i,σ})
      */
     inline void KineticGenerator(MatType &H) const {
         H.setZero();
@@ -117,7 +115,7 @@ class HubbardChainUtils : public SpinlessTvUtils {
             }
         }
 
-        // Chemical potential term: -μ Σ_{i,σ} n_{i,σ} = -μ/2 Σ_{i,σ} (1 - i γ^1_{i,σ} γ^2_{i,σ})
+        // Chemical potential term: -μ Σ_{i,σ} n_{i,σ} = -μ/2 Σ_{i,σ} (1 + i γ^1_{i,σ} γ^2_{i,σ})
         // Only the i γ^1_{i,σ} γ^2_{i,σ} part contributes to H (constant part drops out)
         for (int i = 0; i < Lx; i++) {
             for (int ispin = 0; ispin < 2; ispin++) {
@@ -165,7 +163,7 @@ class HubbardChainUtils : public SpinlessTvUtils {
         }
 
         // Interaction energy: U Σ_i <n_{i,↑} n_{i,↓}>
-        // n_{i,σ} = (1 - i γ^1_{i,σ} γ^2_{i,σ}) / 2
+        // n_{i,σ} = (1 + i γ^1_{i,σ} γ^2_{i,σ}) / 2
         // n_{i,↑} n_{i,↓} = [1 - i(γ^1_{i,↑} γ^2_{i,↑} + γ^1_{i,↓} γ^2_{i,↓})
         //                     - γ^1_{i,↑} γ^2_{i,↑} γ^1_{i,↓} γ^2_{i,↓}] / 4
         int idxu1, idxu2, idxd1, idxd2;
@@ -208,7 +206,7 @@ class HubbardChainUtils : public SpinlessTvUtils {
             for (int ispin = 0; ispin < 2; ispin++) {
                 idx1 = majoranaCoord2Idx(i, ispin, 0);
                 idx2 = majoranaCoord2Idx(i, ispin, 1);
-                // <n_{i,σ}> = 1/2 - i/2 <γ^1_{i,σ} γ^2_{i,σ}>
+                // <n_{i,σ}> = 1/2 + i/2 <γ^1_{i,σ} γ^2_{i,σ}>
                 n_total += 0.5 * (1.0 - (1.0i) * g(idx1, idx2));
             }
         }
