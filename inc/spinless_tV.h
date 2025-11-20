@@ -3,6 +3,7 @@
 
 #include "operator.h"
 #include "types.h"
+#include <cassert>
 
 class SpinlessTvUtils {
    public:
