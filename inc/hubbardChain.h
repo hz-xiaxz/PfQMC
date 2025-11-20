@@ -179,15 +179,14 @@ class HubbardChainUtils : public SpinlessTvUtils {
             idxd2 = majoranaCoord2Idx(i, 1, 1); // γ^2_{i,↓}
 
             // Two-point terms: -U/4 (<i γ^1_↑ γ^2_↑> + <i γ^1_↓ γ^2_↓>)
-            r -= tmpU * (1.0i) * (g(idxu1, idxu2) + g(idxd1, idxd2));
+            // r -= tmpU * (1.0i) * (g(idxu1, idxu2) + g(idxd1, idxd2));
 
             // <n_{i,↑} n_{i,↓}> four-point term with ALL Wick contractions
-            // Following Kitaev chain pattern (kitaevChain.h:386-388): signs are +, +, -
 
             DataType nn_interaction = tmpU * (
-                + g(idxu1, idxd1) * g(idxu2, idxd2)  // +<γ^1_↑ γ^1_↓><γ^2_↑ γ^2_↓>
-                + g(idxu1, idxd2) * g(idxu2, idxd1)  // +<γ^1_↑ γ^2_↓><γ^2_↑ γ^1_↓>
-                - g(idxu1, idxu2) * g(idxd1, idxd2)  // -<γ^1_↑ γ^2_↑><γ^1_↓ γ^2_↓> (disconnected)
+                + g(idxu1, idxu1) * g(idxu2, idxd2)  // +<γ^1_↑ γ^1_↑><γ^2_↑ γ^2_↓>
+                - g(idxu1, idxu2) * g(idxd1, idxd2) // -<γ^1_↑ γ^2_↑><γ^1_↓ γ^2_↓>
+                + g(idxu1, idxd2) * g(idxd1, idxu2)  // +<γ^1_↑ γ^2_↓><γ^1_↓ γ^2_↑> 
             );
             r -= nn_interaction;  // Note: minus sign for four-point term
         }
