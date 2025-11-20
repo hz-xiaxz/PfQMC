@@ -370,7 +370,7 @@ int main_chain(int Lx, int LTau, double dt, double V, double delta,int nthreads,
 }
 
 
-int main_hubbard(int Lx, int LTau, double dt, double U, int nthreads, int nseed, int evaluationLength, char* filename, double mu=0.0, int hsScheme=0, int boundary=1) {
+int main_hubbard(int Lx, int LTau, double dt, double U, int nthreads, int nseed, int evaluationLength, char* filename, double mu=0.0, int boundary=1) {
     double start_time = omp_get_wtime();
     mkl_set_num_threads(nthreads);
 
@@ -381,9 +381,9 @@ int main_hubbard(int Lx, int LTau, double dt, double U, int nthreads, int nseed,
 
     fout << "=== 1D Hubbard Model with chemical potential mu = " << mu << " ===\n";
     fout << "Lx = " << Lx << " LTau = " << LTau << " dt = " << dt << " U = " << U << " seed = " << nseed << " nthreads = " << nthreads
-         << " mu = " << mu << " boundary = " << boundary << " hsScheme = " << hsScheme << " evaluationLength = " << evaluationLength << std::endl;
+         << " mu = " << mu << " boundary = " << boundary  << " evaluationLength = " << evaluationLength << std::endl;
 
-    HubbardChainUtils config(Lx, dt, U, LTau, boundary, mu, hsScheme);
+    HubbardChainUtils config(Lx, dt, U, LTau, boundary, mu);
     rdGenerator rd(nseed);
     HubbardChain_tU walker(&config, &rd);
     PfQMC pfqmc(&walker, stabilizationTime);
@@ -529,8 +529,7 @@ int main(int argc, char* argv[]) {
         //     mu = std::stod(argv[11]);
         // }
         mu = std::stod(argv[11]);
-        hsScheme = std::stoi(argv[12]);
-        boundary = std::stoi(argv[13]);
+                boundary = std::stoi(argv[13]);
 
         int numprocs, myid;
         MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
@@ -550,7 +549,7 @@ int main(int argc, char* argv[]) {
         //     ok = main_chain(Lx, LTau, dt, V, delta, nthreads, nseeds[myid], evaluationLength, filename);
         // } else {
         mu = std::stod(argv[11]);
-        ok = main_chain(Lx, LTau, dt, V, delta, nthreads, nseeds[myid], evaluationLength, filename, mu, hsScheme, boundary);
+        ok = main_chain(Lx, LTau, dt, V, delta, nthreads, nseeds[myid], evaluationLength, filename, mu, boundary);
         // }
     } else if (std::strcmp(argv[1], "--hubbard") == 0) {
         if (argc < 13) {
@@ -587,9 +586,7 @@ int main(int argc, char* argv[]) {
         evaluationLength = std::stoi(argv[8]);
         filepath = argv[9];
         mu = std::stod(argv[10]);
-        hsScheme = std::stoi(argv[11]);
-        boundary = std::stoi(argv[12]);
-
+        
         int numprocs, myid;
         MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
         MPI_Comm_rank(MPI_COMM_WORLD, &myid);
@@ -604,7 +601,7 @@ int main(int argc, char* argv[]) {
         sprintf(filename, "%shubbard-%d-%d-%.2lf-%.2lf-%d-%d-%.2lf-BC=%d.out",
             filepath, Lx, LTau, dt, U, myid, nseeds[myid], mu, boundary);
         std::cout << "filename = " << filename << std::endl;
-        ok = main_hubbard(Lx, LTau, dt, U, nthreads, nseeds[myid], evaluationLength, filename, mu, hsScheme, boundary);
+        ok = main_hubbard(Lx, LTau, dt, U, nthreads, nseeds[myid], evaluationLength, filename, mu, boundary);
     } else {
         std::cout << argv[1] << ": invalid arguments\n";
         ok = 0;

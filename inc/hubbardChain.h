@@ -3,7 +3,7 @@
 
 #include "operator.h"
 #include "skewMatUtils.h"
-#include "spinless_tV.h"
+#include "spinful_tV.h"
 #include "types.h"
 
 /**
@@ -19,15 +19,15 @@
  * System dimension: nDim = 4 * Lx (4 Majorana modes per site)
  */
 
-class HubbardChainUtils : public SpinlessTvUtils {
+class HubbardChainUtils : public SpinfulTvUtils {
   public:
     int nsites;
     double U;         // On-site interaction strength
     double mu;        // Chemical potential
     int boundaryType; // 0: PBC, 1: OBC
 
-    HubbardChainUtils(int _L, double _dt, double _U, int _l, int _boundary, double _mu = 0.0, int _hsScheme = 0)
-        : SpinlessTvUtils(_L, 1, _dt, _U, _l, _L * 4, false, _hsScheme) {
+    HubbardChainUtils(int _L, double _dt, double _U, int _l, int _boundary, double _mu = 0.0)
+        : SpinfulTvUtils(_L, 1, _dt, _U, _l, _L * 4, false, 0) {
         // Note: nDim = _L * 4 (4 Majorana modes per site: 2 spins × 2 Majoranas)
         boundaryType = _boundary;
         nsites = _L;
@@ -36,7 +36,7 @@ class HubbardChainUtils : public SpinlessTvUtils {
 
         // Recompute HS parameters for on-site interaction
         // For on-site U interaction, we use same HS transformation structure
-        lambdaV = acosh(exp(0.25 * U * dt));
+        lambdaV = acosh(exp(0.25 * U * dt));  // Correct HS parameter for Hubbard model
         chlV = cosh(lambdaV);
         shlV = sinh(lambdaV);
         thlV = tanh(lambdaV);
@@ -58,27 +58,19 @@ class HubbardChainUtils : public SpinlessTvUtils {
      * Map auxiliary field index to Majorana pair for on-site interaction
      * For on-site Hubbard interaction U n_↑ n_↓
      *
-     * hsScheme = 0: Decouple as exp(λ s [i γ^1_↑ γ^2_↑ + i γ^1_↓ γ^2_↓])
-     * hsScheme = 1: Decouple as exp(λ s [i γ^1_↑ γ^2_↑ - i γ^1_↓ γ^2_↓])
+     * Single transformation: exp(λ s [i γ^1_↑ γ^2_↑ + i γ^1_↓ γ^2_↓])
+     * This corresponds to the form: gamma_{u1} gamma_{u2} + gamma_{d1} gamma_{d2} - 1
      *
      * @param idAux: site index (on-site interaction)
-     * @param imaj: majorana species index (not used for on-site, kept for interface)
+     * @param imaj: majorana species index (0=up, 1=down)
      * @param bType: bond type (not used for on-site)
      * @param idx1, idx2: output Majorana indices
      */
     inline void aux2MajoranaIdx(int idAux, int imaj, int bType, int &idx1, int &idx2) const override {
         // For on-site interaction, idAux is just the site index
-        // We need to couple the two spins on the same site
-        if (hsScheme == 0) {
-            // Scheme 0: couple same-spin Majoranas
-            // This gives: i γ^1_{i,σ} γ^2_{i,σ} terms
-            idx1 = majoranaCoord2Idx(idAux, imaj, 0); // γ^1_{i,σ}
-            idx2 = majoranaCoord2Idx(idAux, imaj, 1); // γ^2_{i,σ}
-        } else {
-            // Scheme 1: alternative coupling
-            idx1 = majoranaCoord2Idx(idAux, imaj, 0);
-            idx2 = majoranaCoord2Idx(idAux, imaj, 1);
-        }
+        // We couple same-spin Majoranas: i γ^1_{i,σ} γ^2_{i,σ}
+        idx1 = majoranaCoord2Idx(idAux, imaj, 0); // γ^1_{i,σ}
+        idx2 = majoranaCoord2Idx(idAux, imaj, 1); // γ^2_{i,σ}
     }
 
     /**
@@ -308,7 +300,7 @@ class HubbardChainUtils : public SpinlessTvUtils {
  * - H_K is the kinetic Hamiltonian (hopping + chemical potential)
  * - V_i is the on-site interaction operator at site i
  */
-class HubbardChain_tU : public Spinless_tV {
+class HubbardChain_tU : public Spinful_tV {
   public:
     const HubbardChainUtils *modelConfig;
     double dt;
@@ -358,7 +350,7 @@ class HubbardChain_tU : public Spinless_tV {
             for (int k = 0; k < nSites; k++) {
                 (*s)(k) = rd->rdZ2();
             }
-            op_array[2 * i + 1] = new SpinlessVOperator(modelConfig, s, 0, rd);
+            op_array[2 * i + 1] = new SpinfulVOperator(modelConfig, s, 0, rd);
         }
         op_array[2 * l] = new DenseOperator(expKhalf, signKHalf);
     }
