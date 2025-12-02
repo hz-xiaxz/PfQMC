@@ -8,6 +8,7 @@
 #include "inc/square.h"
 #include "inc/singleMajoranaHoneycomb.h"
 #include "inc/kitaevChain.h"
+#include "inc/chain1d_tV.h"
 
 void fixSign(DataType& sign, DataType signRaw, double threshold) {
     // unreliable signRaw
@@ -369,9 +370,105 @@ int main_chain(int Lx, int LTau, double dt, double V, double delta,int nthreads,
 }
 
 
+int main_chain1d_tV(int Lx, int LTau, double dt, double V, int nthreads,
+                     int nseed, int evaluationLength, char* filename,
+                     int hsScheme=0, int boundary=0) {
+    double start_time = omp_get_wtime();
+    mkl_set_num_threads(nthreads);
+
+    std::fstream fout(filename, std::fstream::out);
+
+    int stabilizationTime = 10;
+    int thermalLength = 1000;
+
+    // Create config and walker
+    SpinlessTvChain1dUtils config(Lx, dt, V, LTau, boundary, hsScheme);
+    rdGenerator rd(nseed);
+    Chain1d_tV walker(&config, &rd);
+    PfQMC pfqmc(&walker, stabilizationTime);
+
+    fout << "=== 1D t-V Chain Model ===\n";
+    fout << "Lx = " << Lx << " LTau = " << LTau << " dt = " << dt
+         << " V = " << V << " seed = " << nseed << " nthreads = " << nthreads
+         << " boundary = " << boundary << " hsScheme = " << hsScheme
+         << " evaluationLength = " << evaluationLength << std::endl;
+
+    // Thermalization
+    fout << "Thermalization: ";
+    for (int i = 0; i < thermalLength; i++) {
+        if (i % 100 == 0) fout << i << " " << std::flush;
+        pfqmc.rightSweep();
+        pfqmc.leftSweep();
+    }
+    fout << std::endl;
+
+    // Measurement phase
+    DataType sign, signRaw;
+    DataType obsEnergy, obsParticleNumber, obsStructureFactorPi;
+
+    DataType obsSignTot = 0.0;
+    DataType obsEnergyTot = 0.0;
+    DataType obsParticleNumberTot = 0.0;
+    DataType obsStructureFactorPiTot = 0.0;
+
+    for (int i = 0; i < evaluationLength; i++) {
+        pfqmc.rightSweep();
+        pfqmc.leftSweep();
+        sign = pfqmc.sign;
+
+        // Periodic sign check
+        if (i % 20 == 0) {
+            signRaw = pfqmc.getSignRaw();
+            double threshold = 1e-2;
+            if (std::abs(sign - signRaw) > threshold) {
+                fixSign(sign, signRaw, threshold);
+                pfqmc.sign = sign;
+            }
+        }
+
+        // Measure observables
+        obsEnergy = config.energyFromGreensFunc(pfqmc.g);
+        obsParticleNumber = config.particleNumber(pfqmc.g);
+        obsStructureFactorPi = config.densityStructureFactor(pfqmc.g, M_PI);
+
+        obsSignTot += sign;
+        obsEnergyTot += sign * obsEnergy;
+        obsParticleNumberTot += sign * obsParticleNumber;
+        obsStructureFactorPiTot += sign * obsStructureFactorPi;
+
+        // Print progress
+        if ((i % 100) == 0) {
+            fout << "iter = " << i
+                 << " sign = " << (obsSignTot / double(i + 1)).real()
+                 << " E/L = " << (obsEnergyTot / obsSignTot / double(Lx)).real()
+                 << " N/L = " << (obsParticleNumberTot / obsSignTot / double(Lx)).real()
+                 << " S(pi) = " << (obsStructureFactorPiTot / obsSignTot).real()
+                 << "\n";
+        }
+    }
+
+    // Final results
+    fout << "\n=== Final Results ===\n";
+    fout << "Average sign: " << (obsSignTot / double(evaluationLength)).real() << "\n";
+    fout << "Energy per site: " << (obsEnergyTot / obsSignTot / double(Lx)).real() << "\n";
+    fout << "Particle number per site: " << (obsParticleNumberTot / obsSignTot / double(Lx)).real() << "\n";
+    fout << "Density structure factor S(pi): " << (obsStructureFactorPiTot / obsSignTot).real() << "\n";
+
+    double time = omp_get_wtime() - start_time;
+    fout << "Total time: " << time << " seconds\n";
+    fout.close();
+
+    std::cout << "Simulation completed. Results written to " << filename << std::endl;
+    return 0;
+}
+
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cout << "Usage: " << argv[0] << " --square | --honeycomb | --MRhoneycomb [PARAMS]\n";
+        std::cout << "Usage: " << argv[0] << " --square | --honeycomb | --MRhoneycomb | --chain | --chain1d [PARAMS]\n";
+        std::cout << "\n--chain1d: 1D t-V chain (spinless fermions)\n";
+        std::cout << "  Parameters: Lx LTau dt V nthreads nseed evaluationLength filepath [hsScheme] [boundary]\n";
+        std::cout << "  Example: " << argv[0] << " --chain1d 8 100 0.1 1.0 4 42 1000 ./ 0 0\n";
         return 0;
     }
 
@@ -459,6 +556,38 @@ int main(int argc, char* argv[]) {
         mu = std::stod(argv[11]);
         ok = main_chain(Lx, LTau, dt, V, delta, nthreads, nseeds[myid], evaluationLength, filename, mu, hsScheme, boundary);
         // }
+    } else if (std::strcmp(argv[1], "--chain1d") == 0) {
+        int Lx, LTau, nthreads, nseed, evaluationLength, hsScheme, boundary;
+        double dt, V;
+        char* filepath;
+        char filename[100];
+
+        Lx = std::stoi(argv[2]);
+        LTau = std::stoi(argv[3]);
+        dt = std::stod(argv[4]);
+        V = std::stod(argv[5]);
+        nthreads = std::stoi(argv[6]);
+        nseed = std::stoi(argv[7]);
+        evaluationLength = std::stoi(argv[8]);
+        filepath = argv[9];
+        hsScheme = (argc > 10) ? std::stoi(argv[10]) : 0;
+        boundary = (argc > 11) ? std::stoi(argv[11]) : 0;
+
+        int numprocs, myid;
+        MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
+        MPI_Comm_rank(MPI_COMM_WORLD, &myid);
+
+        srand(nseed);
+        int nseeds[numprocs];
+        for (int i = 0; i < numprocs; i++) {
+            nseeds[i] = rand();
+        }
+
+        // filename = "chain1d-Lx-Ltau-dt-V-myid-seed-BC.out"
+        sprintf(filename, "%schain1d-%d-%d-%.2lf-%.2lf-%d-%d-BC=%d.out",
+            filepath, Lx, LTau, dt, V, myid, nseeds[myid], boundary);
+        std::cout << "filename = " << filename << std::endl;
+        ok = main_chain1d_tV(Lx, LTau, dt, V, nthreads, nseeds[myid], evaluationLength, filename, hsScheme, boundary);
     } else {
         std::cout << argv[1] << ": invalid arguments\n";
         ok = 0;

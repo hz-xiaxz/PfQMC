@@ -1,6 +1,7 @@
 #ifndef Spinless_tV_H
 #define Spinless_tV_H
 
+#include <cassert>
 #include "operator.h"
 #include "types.h"
 
