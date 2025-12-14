@@ -77,15 +77,15 @@ version = "1.11.0"
 
 [[deps.XDiag]]
 deps = ["CxxWrap", "LinearAlgebra", "Printf", "XDiag_jll"]
-git-tree-sha1 = "fb3a77f0244f4b5d6041a2a665d4245f7ff251b1"
+git-tree-sha1 = "f790381ae939f5d56a49fc9d5288cee211efe984"
 uuid = "3edaab83-692e-476a-bab5-541af84d25fc"
-version = "0.4.0"
+version = "0.4.1"
 
 [[deps.XDiag_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "LLVMOpenMP_jll", "Libdl", "OpenBLAS_jll", "libcxxwrap_julia_jll"]
-git-tree-sha1 = "89c89f27e2047f62e32089c1412a43adf0e972f2"
+git-tree-sha1 = "ed2e7f27dc33acfd0f9c57c365cd64091289a68f"
 uuid = "05e47fe5-458f-5313-a276-ec18ac0ef94c"
-version = "0.4.0+0"
+version = "0.4.1+0"
 
 [[deps.libblastrampoline_jll]]
 deps = ["Artifacts", "Libdl"]
