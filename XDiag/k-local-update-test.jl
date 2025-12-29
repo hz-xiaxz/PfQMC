@@ -506,13 +506,13 @@ if abspath(PROGRAM_FILE) == @__FILE__
         analyze_mixing(N=6, h=1.0, k=k, samples=5000, thermalization=1000)
     end
 
-    # Sweep h parameter
+    # Sweep h parameter around critical region (h=0 has zero magic, importance sampling fails)
     println()
     println()
-    println("PART 2: Parameter sweep over h (transverse field)")
+    println("PART 2: Parameter sweep over h (around critical region h≈1)")
     sweep_results = sweep_h_parameter(
         N=6,
-        h_values=[0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0],
+        h_values=[0.8, 0.9, 1.0, 1.1, 1.2],
         max_k=5,
         samples=3000,
         thermalization=500,
