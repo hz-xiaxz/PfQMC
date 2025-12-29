@@ -392,6 +392,130 @@ function analyze_mixing(;
 end
 
 # ============================================================
+# Pauli string Hamming weight (number of non-identity Paulis)
+# ============================================================
+
+"""
+Compute Hamming weight of a Pauli string (number of non-identity operators).
+"""
+function pauli_hamming_weight(indices::Vector{Int})
+    return sum(indices .!= 1)  # Count non-identity (index != 1)
+end
+
+"""
+Measure the average Hamming weight of sampled Pauli strings.
+This tells us about the "spread" of the Pauli distribution - how many sites
+typically have non-identity operators in the dominant Pauli strings.
+
+For the TFIM ground state:
+- h→0 (classical): Pauli strings concentrate on Z-type operators
+- h→∞ (paramagnetic): Pauli strings concentrate on X-type operators
+- h≈1 (critical): more diverse Pauli structure
+
+The average Hamming weight relates to the "effective support" of the state
+in Pauli space.
+"""
+function measure_pauli_hamming_weight(;
+    N::Int=6,
+    h::Float64=1.0,
+    k::Int=2,
+    samples::Int=5000,
+    thermalization::Int=1000
+)
+    # Build system
+    block = Spinhalf(N)
+    ops = OpSum()
+    J = 1.0
+
+    for i in 1:N
+        j = mod1(i + 1, N)
+        ops += -4.0 * J * Op("SzSz", [i, j])
+        ops += -1.0 * h * Op("S+", [i])
+        ops += -1.0 * h * Op("S-", [i])
+    end
+
+    _, psi0 = eig0(ops, block)
+
+    # Initialize
+    current_P_indices = rand(1:4, N)
+    current_state = compute_state_from_indices(psi0, current_P_indices)
+    current_weight = abs2(dot(psi0, current_state))
+
+    # Thermalization
+    for _ in 1:thermalization
+        current_P_indices, current_state, current_weight, _, _ = k_local_update!(
+            current_P_indices, current_state, current_weight, psi0, k, N
+        )
+    end
+
+    # Collect Hamming weights of sampled Pauli strings
+    hamming_weights = Int[]
+
+    # Also track Pauli type distribution at each site
+    pauli_counts = zeros(Int, N, 4)  # site × pauli_type
+
+    for _ in 1:samples
+        current_P_indices, current_state, current_weight, _, _ = k_local_update!(
+            current_P_indices, current_state, current_weight, psi0, k, N
+        )
+        push!(hamming_weights, pauli_hamming_weight(current_P_indices))
+
+        for (site, p_idx) in enumerate(current_P_indices)
+            pauli_counts[site, p_idx] += 1
+        end
+    end
+
+    # Statistics
+    avg_weight = mean(hamming_weights)
+    std_weight = std(hamming_weights)
+
+    # Marginal distribution over Pauli types (averaged over sites)
+    pauli_marginal = vec(sum(pauli_counts, dims=1)) / (N * samples)
+
+    return (
+        avg_hamming_weight = avg_weight,
+        std_hamming_weight = std_weight,
+        pauli_marginal = pauli_marginal,  # [P(I), P(X), P(Y), P(Z)]
+        hamming_weights = hamming_weights
+    )
+end
+
+"""
+Sweep h and measure Pauli string Hamming weight distribution.
+"""
+function sweep_pauli_hamming_weight(;
+    N::Int=6,
+    h_values::Vector{Float64}=[0.8, 0.9, 1.0, 1.1, 1.2],
+    k::Int=2,
+    samples::Int=5000,
+    thermalization::Int=1000
+)
+    println("=" ^ 90)
+    println("Pauli String Hamming Weight vs h")
+    println("=" ^ 90)
+    @printf "N = %d, k = %d (for MCMC), samples = %d\n" N k samples
+    println("=" ^ 90)
+    println()
+
+    results = []
+
+    for h in h_values
+        res = measure_pauli_hamming_weight(N=N, h=h, k=k, samples=samples, thermalization=thermalization)
+        push!(results, (h=h, res...))
+        @printf "h = %.2f: Avg Hamming Weight = %.3f ± %.3f, P(I,X,Y,Z) = [%.3f, %.3f, %.3f, %.3f]\n" h res.avg_hamming_weight res.std_hamming_weight res.pauli_marginal...
+    end
+
+    println()
+    println("Interpretation:")
+    println("  - Hamming weight = number of non-identity Paulis in the sampled string")
+    println("  - Higher weight → state has more 'spread' in Pauli space")
+    println("  - P(I,X,Y,Z) = marginal probability of each Pauli type (averaged over sites)")
+    println()
+
+    return results
+end
+
+# ============================================================
 # Parameter sweep over h (transverse field)
 # ============================================================
 
@@ -517,5 +641,17 @@ if abspath(PROGRAM_FILE) == @__FILE__
         samples=3000,
         thermalization=500,
         n_runs=3
+    )
+
+    # Part 3: Pauli string Hamming weight analysis
+    println()
+    println()
+    println("PART 3: Pauli String Hamming Weight (number of non-I Paulis)")
+    pauli_weight_results = sweep_pauli_hamming_weight(
+        N=6,
+        h_values=[0.8, 0.9, 1.0, 1.1, 1.2],
+        k=2,
+        samples=5000,
+        thermalization=1000
     )
 end
