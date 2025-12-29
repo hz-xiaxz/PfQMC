@@ -392,17 +392,130 @@ function analyze_mixing(;
 end
 
 # ============================================================
+# Parameter sweep over h (transverse field)
+# ============================================================
+
+"""
+Sweep h parameter and measure normalized acceptance rate and Hamming distance for each k.
+"""
+function sweep_h_parameter(;
+    N::Int=6,
+    h_values::Vector{Float64}=[0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0],
+    max_k::Int=5,
+    samples::Int=3000,
+    thermalization::Int=500,
+    n_runs::Int=3
+)
+    println("=" ^ 90)
+    println("Parameter Sweep: h from $(minimum(h_values)) to $(maximum(h_values))")
+    println("=" ^ 90)
+    @printf "N = %d, samples = %d, thermalization = %d, runs = %d\n" N samples thermalization n_runs
+    println("=" ^ 90)
+    println()
+
+    # Store all results
+    all_results = Dict{Float64, Vector{NamedTuple}}()
+
+    for h in h_values
+        @printf "h = %.2f: " h
+        results_for_h = []
+
+        for k in 1:max_k
+            avg_hammings = Float64[]
+            acc_rates = Float64[]
+
+            for run in 1:n_runs
+                res = run_k_local_test(N=N, h=h, k=k, samples=samples, thermalization=thermalization)
+                push!(avg_hammings, res.avg_hamming_accepted)
+                push!(acc_rates, res.acceptance_rate)
+            end
+
+            push!(results_for_h, (
+                k = k,
+                avg_hamming = mean(avg_hammings),
+                acceptance_rate = mean(acc_rates),
+                normalized_acc = mean(acc_rates) / (3/4)^k
+            ))
+            print("k=$k ")
+        end
+        println("done")
+
+        all_results[h] = results_for_h
+    end
+
+    # Print summary table
+    println()
+    println("=" ^ 90)
+    println("NORMALIZED ACCEPTANCE RATE BY h AND k")
+    println("=" ^ 90)
+
+    # Header
+    print(@sprintf "%-6s |" "h")
+    for k in 1:max_k
+        print(@sprintf " k=%-6d |" k)
+    end
+    println()
+    println("-" ^ (8 + 10 * max_k))
+
+    for h in h_values
+        print(@sprintf "%-6.2f |" h)
+        for r in all_results[h]
+            print(@sprintf " %7.4f |" r.normalized_acc)
+        end
+        println()
+    end
+
+    println()
+    println("=" ^ 90)
+    println("AVERAGE HAMMING DISTANCE (ACCEPTED) BY h AND k")
+    println("=" ^ 90)
+
+    # Header
+    print(@sprintf "%-6s |" "h")
+    for k in 1:max_k
+        print(@sprintf " k=%-6d |" k)
+    end
+    println()
+    println("-" ^ (8 + 10 * max_k))
+
+    for h in h_values
+        print(@sprintf "%-6.2f |" h)
+        for r in all_results[h]
+            print(@sprintf " %7.4f |" r.avg_hamming)
+        end
+        println()
+    end
+
+    return all_results
+end
+
+# ============================================================
 # Run the test
 # ============================================================
 
 if abspath(PROGRAM_FILE) == @__FILE__
-    # Run the main test
-    results = k_local_update_test(N=6, h=1.0, max_k=5, samples=2000, thermalization=500, n_runs=3)
+    # Run the main test with more samples to check scaling
+    println("PART 1: Scaling test with more samples")
+    println("=" ^ 80)
+    results = k_local_update_test(N=6, h=1.0, max_k=5, samples=5000, thermalization=1000, n_runs=5)
 
     println()
     println("Additional mixing analysis (Hamming distance from reference state):")
     println("-" ^ 60)
     for k in 1:5
-        analyze_mixing(N=6, h=1.0, k=k, samples=3000, thermalization=500)
+        analyze_mixing(N=6, h=1.0, k=k, samples=5000, thermalization=1000)
     end
+
+    # Sweep h parameter
+    println()
+    println()
+    println("PART 2: Parameter sweep over h (transverse field)")
+    sweep_results = sweep_h_parameter(
+        N=6,
+        h_values=[0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0],
+        max_k=5,
+        samples=3000,
+        thermalization=500,
+        n_runs=3
+    )
 end
