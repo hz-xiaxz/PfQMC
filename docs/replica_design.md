@@ -540,77 +540,384 @@ Add new measurement functions to compute correlations between replicas:
 DataType interReplicaCorrelation(const MatType& g_full, int r1, int r2);
 ```
 
+## Implementation Approach: Direct Modification (Recommended)
+
+### Why Direct Modification?
+
+Instead of creating new classes (`SpinlessVOperator4Replica`, `PfQMC4Replica`), we **modify existing classes** with a `nReplicas` parameter that defaults to 1. This approach:
+
+1. **Minimal code duplication** - Single code path to maintain
+2. **Easy regression testing** - `nReplicas=1` must match original behavior exactly
+3. **Incremental development** - Can test each change against known results
+4. **Simpler op_array** - No need to choose between class variants
+
+### Design Pattern
+
+Add `nReplicas` parameter (default=1) to existing classes:
+
+```cpp
+class SpinlessVOperator : public Operator {
+protected:
+    const SpinlessTvUtils* config;
+    const double etaM;
+
+public:
+    const int nReplicas;      // NEW: default = 1 for backward compatibility
+    const int nDimSingle;     // NEW: single-replica dimension (was nDim)
+    const int nDim;           // CHANGED: = nReplicas * nDimSingle
+    const int bondType;
+
+    // CHANGED: from single pointer to vector
+    std::vector<iVecType*> s;           // s[r] for replica r, size = nReplicas
+
+    // NEW: per-replica B matrices
+    std::vector<MatType> B_replica;     // size = nReplicas, each nDimSingle × nDimSingle
+
+    // EXISTING: full block-diagonal B (nDim × nDim)
+    MatType B;
+    MatType B_inv;
+
+    rdGenerator* rd;
+
+    // CHANGED: constructor signature
+    SpinlessVOperator(const SpinlessTvUtils* _config,
+                      std::vector<iVecType*> _s,    // vector instead of single pointer
+                      int _bondType,
+                      rdGenerator* _rd,
+                      int _nReplicas = 1);          // NEW: default = 1
+    // ...
+};
+```
+
+---
+
 ## Files to Update Summary
 
 ### New Files to Create
 
 | File | Description |
 |------|-------------|
-| `inc/mixing_operator.h` | MixingOperator class for τ=0 replica pair mixing |
-| `inc/spinless_tV_4replica.h` | 4-replica version of SpinlessVOperator |
-| `inc/pfqmc_4replica.h` | 4-replica version of PfQMC class |
+| `inc/mixing_operator.h` | MixingOperator class for τ=0 replica pair mixing (only new class needed) |
 
-### Must Modify
+### Must Modify (Direct Changes)
 
 | File | Priority | Changes |
 |------|----------|---------|
-| `inc/types.h` | High | Add `N_REPLICAS=4`, helper macros |
-| `inc/qr_udt.h` | High | Verify works with `4*nDim` matrices |
-| `inc/operator.h` | Medium | Base class unchanged, but verify interface |
+| `inc/types.h` | High | Add helper macros for replica indexing |
+| `inc/spinless_tV.h` | High | Add `nReplicas` param, vector of aux fields, per-replica B |
+| `inc/pfqmc.h` | High | Add `nReplicas` param, handle mixing operator |
+| `src/pfqmc.cpp` | High | Update sweeps for replicas and mixing |
+| `inc/operator.h` | Medium | Add `nReplicas` to DenseOperator |
+| `inc/qr_udt.h` | Low | Verify works with larger matrices |
 
 ### May Need Updates (for measurements)
 
 | File | Notes |
 |------|-------|
-| `inc/honeycomb.h` | Add 4-replica measurement functions |
-| `inc/square.h` | Add 4-replica measurement functions |
-| `inc/kitaevChain.h` | Add 4-replica measurement functions |
-| `inc/chain1d_tV.h` | Add 4-replica measurement functions |
+| `inc/honeycomb.h` | Measurement functions (extract per-replica blocks) |
+| `inc/square.h` | Measurement functions |
+| `inc/kitaevChain.h` | Measurement functions |
+| `inc/chain1d_tV.h` | Measurement functions |
 | `main.cpp` | Add 4-replica simulation entry points |
-| `inc/skewMatUtils.h` | May need pair-block pfaffian computations |
 
 ---
 
 ## Detailed Function Changes
 
-### Functions in `src/pfqmc.cpp` to Update/Create
+### Functions in `inc/spinless_tV.h` to Modify
 
 | Function | Line | Change Type | Description |
 |----------|------|-------------|-------------|
-| `PfQMC::PfQMC()` | 5-30 | **New version** | Create `PfQMC4Replica` constructor handling mixing operator |
-| `PfQMC::rightInit()` | 24-49 (in .h) | **New version** | Account for mixing operator in UDT chain |
-| `PfQMC::leftInit()` | 51-77 (in .h) | **New version** | Account for mixing operator in UDT chain |
-| `PfQMC::rightSweep()` | 32-79 | **New version** | Apply mixing at τ=0, update 4 replicas |
-| `PfQMC::leftSweep()` | 81-123 | **New version** | Apply inverse mixing, update 4 replicas |
-| `PfQMC::getSignRaw()` | 125-192 | **New version** | Compute sign with pair-block structure |
+| `SpinlessVOperator()` | 165-177 | **Modify** | Add `nReplicas` param, init vector of aux fields |
+| `singleFlip()` | 189-303 | **Modify** | Add `replica` param, compute global indices |
+| `singleFlipSingleMajorana()` | 305-344 | **Modify** | Add `replica` param |
+| `update()` | 346-364 | **Modify** | Loop over `nReplicas` |
+| `rebuildFullB()` | (new) | **Add** | Build block-diagonal B from B_replica[] |
+| `left_propagate()` | 374-378 | **Modify** | Call `rebuildFullB()` first if nReplicas > 1 |
+| `right_propagate()` | 379-383 | **Modify** | Call `rebuildFullB()` first if nReplicas > 1 |
+| `getGreensMat()` | 389-392 | **Modify** | Build block-diagonal g0 |
+| Destructor | 179 | **Modify** | Delete all s[r] pointers |
 
-### Functions in `inc/spinless_tV.h` to Update/Create
+### Functions in `src/pfqmc.cpp` to Modify
 
 | Function | Line | Change Type | Description |
 |----------|------|-------------|-------------|
-| `SpinlessVOperator` constructor | 165-177 | **New class** | `SpinlessVOperator4Replica` with 4 aux fields |
-| `singleFlip()` | 189-303 | **New version** | Per-replica flip with pair-block acceptance |
-| `update()` | 346-364 | **New version** | Loop over 4 replicas |
-| `rebuildFullB()` | (new) | **New function** | Build 4*nDim block-diagonal B from per-replica B |
-| `left_multiply()` | 370-372 | **Inherit** | Works with larger matrix |
-| `right_multiply()` | 366-368 | **Inherit** | Works with larger matrix |
-| `left_propagate()` | 374-378 | **Modify** | Use rebuilt full B and B_inv |
-| `right_propagate()` | 379-383 | **Modify** | Use rebuilt full B and B_inv |
-| `getGreensMat()` | 389-392 | **New version** | Return 4*nDim block-diagonal g0 |
+| `PfQMC::PfQMC()` | 5-30 | **Modify** | Add `nReplicas`, `mixingOp` params |
+| `PfQMC::rightInit()` | 24-49 (in .h) | **Modify** | Include mixing operator in UDT chain |
+| `PfQMC::leftInit()` | 51-77 (in .h) | **Modify** | Include mixing operator in UDT chain |
+| `PfQMC::rightSweep()` | 32-79 | **Modify** | Apply mixing at τ=0 |
+| `PfQMC::leftSweep()` | 81-123 | **Modify** | Apply inverse mixing at τ=0 |
+| `PfQMC::getSignRaw()` | 125-192 | **Modify** | Handle pair-block structure |
 
 ### Functions in `inc/qr_udt.h` to Verify
 
 | Function | Line | Status | Notes |
 |----------|------|--------|-------|
-| `UDT(MatType& A)` | 62-99 | **Verify** | Should work with 4*nDim matrices |
-| `onePlusInv()` | 178-191 | **Verify** | May need block-aware version for stability |
+| `UDT(MatType& A)` | 62-99 | **Verify** | Should work with larger matrices |
+| `onePlusInv()` | 178-191 | **Verify** | Test numerical stability |
 | `operator*(UDT, UDT)` | 194-203 | **Verify** | Should work transparently |
 | `operator*(MatType, UDT)` | 206-213 | **Verify** | Should work transparently |
-| `onePlusInv(UDT&, UDT&)` | 216-253 | **Verify** | May need block-aware version |
+| `onePlusInv(UDT&, UDT&)` | 216-253 | **Verify** | Test numerical stability |
 
 ---
 
-## Key Implementation Insights
+## Code Sketches for Direct Modification
+
+### Modified SpinlessVOperator Constructor
+
+```cpp
+// inc/spinless_tV.h - Modified constructor
+
+SpinlessVOperator(const SpinlessTvUtils* _config,
+                  std::vector<iVecType*> _s,
+                  int _bondType,
+                  rdGenerator* _rd,
+                  int _nReplicas = 1)
+    : config(_config),
+      etaM(_config->etaM),
+      nReplicas(_nReplicas),
+      nDimSingle(_config->nDim),
+      nDim(_nReplicas * _config->nDim),  // total dimension
+      bondType(_bondType),
+      singleMaj(_config->singleMaj),
+      hsScheme(_config->hsScheme)
+{
+    assert(_s.size() == _nReplicas);
+    s = _s;
+    rd = _rd;
+
+    // Initialize per-replica B matrices
+    B_replica.resize(nReplicas);
+    for (int r = 0; r < nReplicas; r++) {
+        B_replica[r] = MatType::Identity(nDimSingle, nDimSingle);
+        config->InteractionBGenerator(B_replica[r], *s[r], bondType, false);
+    }
+
+    // Build full block-diagonal B
+    rebuildFullB();
+}
+
+// Backward-compatible constructor (single replica)
+SpinlessVOperator(const SpinlessTvUtils* _config,
+                  iVecType* _s,
+                  int _bondType,
+                  rdGenerator* _rd)
+    : SpinlessVOperator(_config, std::vector<iVecType*>{_s}, _bondType, _rd, 1)
+{}
+```
+
+### rebuildFullB() Implementation
+
+```cpp
+void SpinlessVOperator::rebuildFullB() {
+    if (nReplicas == 1) {
+        // Single replica: B_replica[0] is the full B
+        B = B_replica[0];
+        return;
+    }
+
+    // Multiple replicas: build block-diagonal
+    B = MatType::Zero(nDim, nDim);
+    for (int r = 0; r < nReplicas; r++) {
+        B.block(r * nDimSingle, r * nDimSingle, nDimSingle, nDimSingle) = B_replica[r];
+    }
+}
+
+void SpinlessVOperator::rebuildFullBInv() {
+    if (nReplicas == 1) {
+        B_inv = MatType::Identity(nDimSingle, nDimSingle);
+        config->InteractionBGenerator(B_inv, *s[0], bondType, true);
+        return;
+    }
+
+    B_inv = MatType::Zero(nDim, nDim);
+    for (int r = 0; r < nReplicas; r++) {
+        MatType B_inv_r = MatType::Identity(nDimSingle, nDimSingle);
+        config->InteractionBGenerator(B_inv_r, *s[r], bondType, true);
+        B_inv.block(r * nDimSingle, r * nDimSingle, nDimSingle, nDimSingle) = B_inv_r;
+    }
+}
+```
+
+### Modified singleFlip() with Replica Parameter
+
+```cpp
+void SpinlessVOperator::singleFlip(MatType& g, int replica, int idxAux,
+                                    double rand, bool& flag, DataType& signCur) {
+    // Compute offset for this replica in the global matrix
+    int offset = replica * nDimSingle;
+
+    DataType r;
+    int auxCur = (*s[replica])(idxAux);
+    int idx1, idx2, idx3, idx4;
+    DataType tmp[2];
+    const int inc = 1;
+    DataType alpha;
+
+    // Get local indices (within single replica)
+    config->aux2MajoranaIdx(idxAux, 0, bondType, idx1, idx2);
+    config->aux2MajoranaIdx(idxAux, 1, bondType, idx3, idx4);
+
+    // Convert to global indices
+    int idx1_g = offset + idx1;
+    int idx2_g = offset + idx2;
+    int idx3_g = offset + idx3;
+    int idx4_g = offset + idx4;
+
+    if (hsScheme == 0) {
+        tmp[0] = (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx1_g, idx2_g)));
+        tmp[1] = (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx3_g, idx4_g)));
+        r = tmp[0] * tmp[1];
+        r += (config->thlV * config->thlV) *
+             ((g(idx1_g, idx3_g) * g(idx2_g, idx4_g)) - (g(idx2_g, idx3_g) * g(idx1_g, idx4_g)));
+        r *= etaM;
+    } else if (hsScheme == 1) {
+        // ... similar with global indices ...
+    }
+
+    flag = rand < std::abs(r);
+
+    if (flag) {
+        signCur *= (r / std::abs(r));
+
+        if (hsScheme == 0) {
+            for (int imaj = 0; imaj < 2; imaj++) {
+                config->aux2MajoranaIdx(idxAux, imaj, bondType, idx1, idx2);
+                int idx1_g = offset + idx1;
+                int idx2_g = offset + idx2;
+
+                if (imaj == 1) {
+                    tmp[1] = (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx1_g, idx2_g)));
+                }
+
+                // Update aux field and B_replica matrix
+                (*s[replica])(idxAux) = -auxCur;
+                B_replica[replica](idx1, idx2) = -B_replica[replica](idx1, idx2);
+                B_replica[replica](idx2, idx1) = -B_replica[replica](idx2, idx1);
+
+                // Update Green's function (using global indices)
+                cVecType x1 = -g.col(idx1_g);
+                cVecType x2 = -g.col(idx2_g);
+                x1(idx1_g) += 2;
+                x2(idx2_g) += 2;
+                alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp[imaj];
+                zgeru(&nDim, &nDim, &alpha, x1.data(), &inc, x2.data(), &inc, g.data(), &nDim);
+                alpha = -alpha;
+                zgeru(&nDim, &nDim, &alpha, x2.data(), &inc, x1.data(), &inc, g.data(), &nDim);
+            }
+        }
+        // ... hsScheme == 1 case ...
+    }
+}
+```
+
+### Modified update() Loop
+
+```cpp
+DataType SpinlessVOperator::update(MatType& g) {
+    double rand;
+    bool flag;
+    DataType signCur = 1.0;
+
+    // Loop over all replicas
+    for (int r = 0; r < nReplicas; r++) {
+        if (singleMaj) {
+            for (int i = 0; i < s[r]->size(); i++) {
+                rand = rd->rdUniform01();
+                singleFlipSingleMajorana(g, r, i, rand, flag, signCur);
+            }
+        } else {
+            for (int i = 0; i < s[r]->size(); i++) {
+                rand = rd->rdUniform01();
+                singleFlip(g, r, i, rand, flag, signCur);
+            }
+        }
+    }
+    return signCur;
+}
+```
+
+### Modified PfQMC Class
+
+```cpp
+// inc/pfqmc.h - Modified class
+
+class PfQMC {
+public:
+    int stb;
+    int nReplicas;        // NEW: number of replicas (default 1)
+    int nDimSingle;       // NEW: single-replica dimension
+    int nDim;             // CHANGED: = nReplicas * nDimSingle
+
+    MatType g;            // nDim × nDim Green's function
+
+    std::vector<Operator*> op_array;
+    Operator* mixingOp;   // NEW: mixing operator at τ=0 (nullptr if nReplicas==1)
+
+    int op_length;
+    std::vector<bool> need_stabilization;
+    int checkpoints;
+    std::vector<UDT> udtL;
+    std::vector<UDT> udtR;
+
+    DataType sign;
+
+    // CHANGED: constructor with optional nReplicas and mixing
+    PfQMC(Spinless_tV* walker, int _stb = 10,
+          int _nReplicas = 1, Operator* _mixingOp = nullptr);
+
+    void rightInit();
+    void leftInit();
+    void rightSweep();
+    void leftSweep();
+    DataType getSignRaw();
+};
+```
+
+### Modified rightSweep with Mixing
+
+```cpp
+void PfQMC::rightSweep() {
+    MatType tmp = MatType::Identity(nDim, nDim);
+    MatType Aseg = MatType::Identity(nDim, nDim);
+    int curSeg = 0;
+    DataType signCur;
+
+    // NEW: Apply mixing operator at τ=0 (if present)
+    if (mixingOp != nullptr) {
+        mixingOp->left_propagate(g, tmp);
+        mixingOp->left_multiply(Aseg, tmp);
+        std::swap(Aseg, tmp);
+    }
+
+    // Rest is same as before, but operates on larger matrices
+    for (int l = 0; l < op_length; l++) {
+        signCur = op_array[l]->update(g);
+        this->sign *= signCur;
+
+        op_array[l]->left_multiply(Aseg, tmp);
+        std::swap(Aseg, tmp);
+
+        if (need_stabilization[(l + 1) % op_length]) {
+            if (curSeg == 0) {
+                udtR[curSeg] = UDT(Aseg);
+            } else {
+                udtR[curSeg] = Aseg * udtR[curSeg - 1];
+            }
+            Aseg = MatType::Identity(nDim, nDim);
+
+            if (curSeg == (checkpoints - 1)) {
+                udtR[curSeg].onePlusInv(g);
+            } else {
+                g = onePlusInv(udtL[curSeg + 1], udtR[curSeg]);
+            }
+            curSeg++;
+        } else {
+            op_array[l]->left_propagate(g, tmp);
+        }
+    }
+}
+```
 
 ### 1. Pair-Block Structure is Essential
 
@@ -669,4 +976,60 @@ The sign computation in `getSignRaw()` needs to account for:
 
 ### Regression Tests
 1. **No mixing case**: Verify results match 4× single-replica runs
+
+---
+
+## Testing Strategy for Direct Modification
+
+### Phase 1: Backward Compatibility (Critical)
+
+Before any replica features, verify `nReplicas=1` exactly matches original code:
+
+```cpp
+// Test 1: Constructor equivalence
+SpinlessVOperator op_old(config, s_ptr, bondType, rd);           // original
+SpinlessVOperator op_new(config, {s_ptr}, bondType, rd, 1);     // new with nReplicas=1
+
+// Test 2: B matrix equivalence
+assert((op_old.B - op_new.B).norm() < 1e-14);
+
+// Test 3: Full simulation equivalence
+// Run identical simulation with old and new code, compare:
+// - Energy at each step
+// - Sign at each step
+// - Final Green's function
+```
+
+### Phase 2: Independent Replicas (No Mixing)
+
+Test `nReplicas=4` with `mixingOp=nullptr` (identity mixing):
+
+```cpp
+// Should be equivalent to running 4 independent simulations
+// Each replica evolves independently, results should be statistically equivalent
+
+// Test: Run 4 separate single-replica simulations
+// Compare average observables against 4-replica run
+// They should match within statistical error
+```
+
+### Phase 3: With Mixing Operators
+
+Test with actual M_12 and M_34 mixing:
+
+```cpp
+// Test 1: Verify off-diagonal blocks G_12, G_21 are non-zero after mixing
+// Test 2: Verify zero blocks (between pair 12 and pair 34) remain zero
+// Test 3: Compare against ED for small systems
+```
+
+### Quick Validation Checklist
+
+| Test | Condition | Expected Result |
+|------|-----------|-----------------|
+| `nReplicas=1` energy | Compare to original | Exact match |
+| `nReplicas=1` sign | Compare to original | Exact match |
+| `nReplicas=4, no mixing` | Independent replicas | Statistical equivalence |
+| `nReplicas=4, with mixing` | Off-diagonal blocks | Non-zero G_12, G_21 |
+| `nReplicas=4, with mixing` | Zero blocks | G_13, G_14, etc. = 0 |
 
