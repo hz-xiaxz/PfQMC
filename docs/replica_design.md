@@ -1033,3 +1033,279 @@ Test with actual M_12 and M_34 mixing:
 | `nReplicas=4, with mixing` | Off-diagonal blocks | Non-zero G_12, G_21 |
 | `nReplicas=4, with mixing` | Zero blocks | G_13, G_14, etc. = 0 |
 
+---
+
+## Detailed Design: Ambiguous Parts
+
+### 1. Acceptance Ratio for Coupled Replicas
+
+When replicas within a pair are coupled by the mixing operator, the acceptance ratio for flipping an auxiliary field must account for the full pair-block structure.
+
+**Key Insight**: The Green's function update formula `G' = G + (G - 2I) * Δ` where Δ is rank-2, still applies but now operates on the full `4*nDim × 4*nDim` matrix. The acceptance ratio `r` is computed from elements within a single replica's diagonal block.
+
+**Why this works**: Even though G has off-diagonal blocks (G_12, G_21), flipping auxiliary field in replica 1 only directly modifies the diagonal block B_11. The Sherman-Morrison-Woodbury update propagates through the full matrix correctly.
+
+```cpp
+// Acceptance ratio computation (hsScheme == 0)
+// For replica r with offset = r * nDimSingle
+
+DataType computeAcceptanceRatio(const MatType& g, int replica,
+                                 int idx1, int idx2, int idx3, int idx4,
+                                 DataType thlV, int auxCur, double etaM) {
+    int offset = replica * nDimSingle;
+    int idx1_g = offset + idx1;
+    int idx2_g = offset + idx2;
+    int idx3_g = offset + idx3;
+    int idx4_g = offset + idx4;
+
+    // These G elements are from the diagonal block G_rr
+    DataType tmp0 = 1.0 - 1.0i * thlV * double(auxCur) * g(idx1_g, idx2_g);
+    DataType tmp1 = 1.0 - 1.0i * thlV * double(auxCur) * g(idx3_g, idx4_g);
+
+    DataType r = tmp0 * tmp1;
+    r += thlV * thlV * (g(idx1_g, idx3_g) * g(idx2_g, idx4_g)
+                      - g(idx2_g, idx3_g) * g(idx1_g, idx4_g));
+    r *= etaM;
+
+    return r;
+}
+```
+
+**Important**: The rank-2 update (`zgeru`) operates on the full matrix, which correctly updates both diagonal blocks (G_rr) and off-diagonal blocks (G_rs where s is the paired replica).
+
+### 2. Sign Computation with Replicas
+
+The sign computation in `getSignRaw()` must handle the enlarged matrix structure.
+
+**Approach A: Product of Pair Signs**
+
+Since the matrix is block-diagonal at the pair level, the total pfaffian factorizes:
+
+```
+Pf(G_full) = Pf(G_pair12) × Pf(G_pair34)
+```
+
+```cpp
+DataType PfQMC::getSignRaw() {
+    if (nReplicas == 1) {
+        // Original single-replica code
+        return getSignRawSingleReplica();
+    }
+
+    // For 4 replicas with pair structure
+    DataType sign_pair12 = getSignRawForPair(0);  // replicas 0,1
+    DataType sign_pair34 = getSignRawForPair(1);  // replicas 2,3
+
+    return sign_pair12 * sign_pair34;
+}
+
+DataType PfQMC::getSignRawForPair(int pairIdx) {
+    int pairOffset = pairIdx * 2 * nDimSingle;
+    int pairDim = 2 * nDimSingle;
+
+    // Extract pair block of the product of B matrices
+    // Compute pfaffian for this pair
+    // ... similar to original getSignRaw but on 2*nDimSingle dimension ...
+}
+```
+
+**Approach B: Direct Computation**
+
+Alternatively, compute on the full `4*nDim` matrix if the pfaffian routine handles block structure efficiently.
+
+**Recommendation**: Use Approach A (factorized) for:
+- Better numerical stability
+- Easier debugging (can check each pair independently)
+- Parallelization opportunity
+
+### 3. Mixing Operator Specifics
+
+The mixing operator M couples replicas at τ=0. Several physical choices exist:
+
+#### Option A: SWAP Operator
+
+Swaps Majorana fermions between replicas:
+
+```cpp
+// SWAP between replica 0 and 1 for site i:
+// γ_i^{(0)} ↔ γ_i^{(1)}
+
+MatType buildSwapMixing(int nDimSingle, const std::vector<int>& swapSites) {
+    MatType M = MatType::Identity(2 * nDimSingle, 2 * nDimSingle);
+
+    for (int site : swapSites) {
+        // Swap rows/cols for this site between replica blocks
+        // M[site, site] = 0, M[site, nDimSingle+site] = 1
+        // M[nDimSingle+site, nDimSingle+site] = 0, M[nDimSingle+site, site] = 1
+        M(site, site) = 0;
+        M(site, nDimSingle + site) = 1;
+        M(nDimSingle + site, nDimSingle + site) = 0;
+        M(nDimSingle + site, site) = 1;
+    }
+    return M;
+}
+```
+
+#### Option B: Rotation Operator
+
+Continuous rotation between replicas:
+
+```cpp
+// Rotation by angle θ between replica 0 and 1 for site i:
+// γ_i^{(0)} → cos(θ) γ_i^{(0)} + sin(θ) γ_i^{(1)}
+// γ_i^{(1)} → -sin(θ) γ_i^{(0)} + cos(θ) γ_i^{(1)}
+
+MatType buildRotationMixing(int nDimSingle, double theta,
+                             const std::vector<int>& rotateSites) {
+    MatType M = MatType::Identity(2 * nDimSingle, 2 * nDimSingle);
+    double c = cos(theta);
+    double s = sin(theta);
+
+    for (int site : rotateSites) {
+        M(site, site) = c;
+        M(site, nDimSingle + site) = s;
+        M(nDimSingle + site, site) = -s;
+        M(nDimSingle + site, nDimSingle + site) = c;
+    }
+    return M;
+}
+```
+
+#### Option C: Partial SWAP (for Entanglement Entropy)
+
+For computing Rényi entropy, use partial transpose / partial SWAP:
+
+```cpp
+// SWAP only sites in region A between replicas
+MatType buildPartialSwapMixing(int nDimSingle,
+                                const std::vector<int>& regionA_sites) {
+    return buildSwapMixing(nDimSingle, regionA_sites);
+}
+```
+
+### 4. DenseOperator Replica Support
+
+The kinetic operator (DenseOperator) must also support replicas:
+
+```cpp
+class DenseOperator : public Operator {
+public:
+    int nReplicas;
+    int nDimSingle;
+    int nDim;  // = nReplicas * nDimSingle
+
+    MatType mat_single;      // single-replica matrix (nDimSingle × nDimSingle)
+    MatType mat;             // full block-diagonal (nDim × nDim)
+    MatType mat_inv;
+    MatType g0, g0_inv;
+
+    DenseOperator(const MatType& mat_single_, DataType _s, int _nReplicas = 1)
+        : nReplicas(_nReplicas),
+          nDimSingle(mat_single_.rows()),
+          nDim(_nReplicas * mat_single_.rows())
+    {
+        mat_single = mat_single_;
+
+        if (nReplicas == 1) {
+            mat = mat_single;
+        } else {
+            // Build block-diagonal
+            mat = MatType::Zero(nDim, nDim);
+            for (int r = 0; r < nReplicas; r++) {
+                mat.block(r*nDimSingle, r*nDimSingle, nDimSingle, nDimSingle) = mat_single;
+            }
+        }
+        mat_inv = mat.inverse();
+
+        // Build g0 block-diagonal
+        MatType g0_single = (MatType::Identity(nDimSingle, nDimSingle) + mat_single).inverse()
+                            * 2.0 - MatType::Identity(nDimSingle, nDimSingle);
+        if (nReplicas == 1) {
+            g0 = g0_single;
+        } else {
+            g0 = MatType::Zero(nDim, nDim);
+            for (int r = 0; r < nReplicas; r++) {
+                g0.block(r*nDimSingle, r*nDimSingle, nDimSingle, nDimSingle) = g0_single;
+            }
+        }
+        g0_inv = g0.inverse();
+        signOfWeight = _s;
+    }
+};
+```
+
+### 5. Walker Class (Spinless_tV) Replica Support
+
+The walker class that builds the operator array needs replica support:
+
+```cpp
+class Spinless_tV {
+public:
+    std::vector<Operator*> op_array;
+    int nDim;           // total dimension = nReplicas * nDimSingle
+    int nDimSingle;     // single-replica dimension
+    int nReplicas;
+
+    // For 4 replicas, each operator in op_array handles all 4 replicas
+    // Auxiliary fields are stored per-replica in each SpinlessVOperator
+};
+```
+
+Example walker construction for 4 replicas:
+
+```cpp
+// In lattice-specific walker (e.g., Chain_tV)
+Chain_tV(const SpinlessTvChainUtils* _config, rdGenerator* _rd, int _nReplicas = 1) {
+    nReplicas = _nReplicas;
+    nDimSingle = _config->nDim;
+    nDim = nReplicas * nDimSingle;
+
+    for (int l = 0; l < _config->l; l++) {
+        // Create kinetic operator (same for all replicas)
+        MatType B_K = /* kinetic matrix */;
+        op_array.push_back(new DenseOperator(B_K, 1.0, nReplicas));
+
+        // Create interaction operators with per-replica aux fields
+        for (int bondType = 0; bondType < nBondTypes; bondType++) {
+            std::vector<iVecType*> s_replicas(nReplicas);
+            for (int r = 0; r < nReplicas; r++) {
+                s_replicas[r] = new iVecType(nBonds);
+                // Initialize aux fields randomly
+                for (int b = 0; b < nBonds; b++) {
+                    (*s_replicas[r])(b) = _rd->rdZ2();
+                }
+            }
+            op_array.push_back(new SpinlessVOperator(_config, s_replicas,
+                                                      bondType, _rd, nReplicas));
+        }
+    }
+}
+```
+
+---
+
+## Implementation Order (Revised)
+
+1. **Phase 1: Backward Compatibility**
+   - Modify `SpinlessVOperator` with `nReplicas` param (default=1)
+   - Modify `DenseOperator` with `nReplicas` param (default=1)
+   - Verify `nReplicas=1` matches original exactly
+
+2. **Phase 2: Multi-Replica Without Mixing**
+   - Test `nReplicas=4` with `mixingOp=nullptr`
+   - Verify 4 independent replicas behave correctly
+   - Check block-diagonal structure preserved
+
+3. **Phase 3: Add Mixing Operator**
+   - Implement `MixingOperator` class
+   - Integrate into `PfQMC` sweeps
+   - Test with simple SWAP mixing
+
+4. **Phase 4: Sign Computation**
+   - Implement pair-factorized `getSignRaw()`
+   - Verify sign consistency
+
+5. **Phase 5: Measurements**
+   - Add per-replica measurement extraction
+   - Add inter-replica correlation measurements
+
