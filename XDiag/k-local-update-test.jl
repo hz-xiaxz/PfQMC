@@ -256,6 +256,7 @@ function k_local_update_test(;
         # Run multiple times and average
         avg_hammings = Float64[]
         n_accepted_list = Int[]
+        acc_rates = Float64[]
 
         for run in 1:n_runs
             res = run_k_local_test(
@@ -263,6 +264,7 @@ function k_local_update_test(;
             )
             push!(avg_hammings, res.avg_hamming_accepted)
             push!(n_accepted_list, res.n_nontrivial_accepted)
+            push!(acc_rates, res.acceptance_rate)
         end
 
         push!(results, (
@@ -270,7 +272,9 @@ function k_local_update_test(;
             avg_hamming_mean = mean(avg_hammings),
             avg_hamming_std = std(avg_hammings),
             n_accepted_mean = mean(n_accepted_list),
-            n_accepted_std = std(n_accepted_list)
+            n_accepted_std = std(n_accepted_list),
+            acceptance_rate_mean = mean(acc_rates),
+            acceptance_rate_std = std(acc_rates)
         ))
     end
 
@@ -282,11 +286,29 @@ function k_local_update_test(;
     println()
 
     # Header
-    @printf "%-5s | %-25s | %-25s\n" "k" "Avg Hamming (accepted)" "Num Accepted Moves"
-    println("-" ^ 65)
+    @printf "%-3s | %-12s | %-12s | %-14s | %-18s\n" "k" "Acc Rate" "Normalized" "Avg Hamming" "Num Accepted"
+    println("-" ^ 70)
+
+    # For normalization: assume uniform distribution over 4^N Pauli strings
+    # A k-local update proposes changing k sites. Under uniform distribution,
+    # acceptance rate would be 1 (detailed balance with flat distribution).
+    #
+    # But a better baseline: if the target distribution has some structure,
+    # we expect acceptance ~ (typical weight ratio)^k for independent sites.
+    #
+    # Simple normalization: divide by (3/4)^k to account for the fact that
+    # each site has 3/4 chance of actually changing (not proposing same value).
+    # This gives us "acceptance rate per actual change attempted".
+    #
+    # Alternative: normalize by 1/k to compare "acceptance per site touched"
 
     for r in results
-        @printf "%-5d | %8.4f ± %-14.4f | %8.1f ± %-14.1f\n" r.k r.avg_hamming_mean r.avg_hamming_std r.n_accepted_mean r.n_accepted_std
+        # Normalize: acc_rate / (3/4)^k gives acceptance assuming all k sites change
+        # This removes the trivial k-dependence from "more sites = harder to accept"
+        baseline_change_prob = (3/4)^r.k
+        normalized_acc = r.acceptance_rate_mean / baseline_change_prob
+
+        @printf "%-3d | %10.4f | %10.4f | %12.4f | %8.1f ± %-6.1f\n" r.k r.acceptance_rate_mean normalized_acc r.avg_hamming_mean r.n_accepted_mean r.n_accepted_std
     end
 
     println()
@@ -294,14 +316,13 @@ function k_local_update_test(;
     println("INTERPRETATION")
     println("=" ^ 80)
     println("""
-    - Avg Hamming (accepted): Average number of sites changed per accepted move
-      This only counts accepted moves - rejected moves contribute nothing.
-    - Num Accepted Moves: Total number of non-trivial accepted moves out of $samples proposals
-
-    Key insight:
-    - For k-local update, when accepted, the Hamming distance should be close to k
-      (slightly less due to some sites randomly proposing the same value)
-    - The metric shows how much the configuration actually changes per accepted move
+    - Acc Rate: Raw acceptance rate (fraction of proposals accepted)
+    - Normalized: Acc Rate / (3/4)^k — removes trivial k-dependence
+      If this is constant across k, the distribution factorizes (sites independent).
+      If it decreases with k, there are k-body correlations in the distribution.
+      If it increases with k, larger moves are "finding better paths" through config space.
+    - Avg Hamming: Average sites changed per accepted move (only counts accepted)
+    - Num Accepted: Total non-trivial accepted moves out of $samples proposals
     """)
 
     return results
