@@ -117,18 +117,19 @@ function k_local_update!(
 
     ratio = (current_weight < 1e-12) ? 1.0 : (trial_weight / current_weight)
 
+    # Hamming distance of this proposal
+    proposed_hamming = sum(old_indices .!= new_indices)
+
     # Metropolis acceptance
     if rand() < min(1.0, ratio)
         # Accept
         for (i, site) in enumerate(sites)
             current_P_indices[site] = new_indices[i]
         end
-        proposed_hamming = sum(old_indices .!= new_indices)
         return current_P_indices, trial_state, trial_weight, true, proposed_hamming
     else
-        # Reject
-        proposed_hamming = sum(old_indices .!= new_indices)
-        return current_P_indices, current_state, current_weight, false, proposed_hamming
+        # Reject - return 0 for hamming since we don't count rejected moves
+        return current_P_indices, current_state, current_weight, false, 0
     end
 end
 
@@ -178,58 +179,47 @@ function run_k_local_test(;
     n_accepted = 0
     n_proposed = 0
 
-    # Track Hamming distances between consecutive accepted states
+    # Track Hamming distances for accepted moves only
     hamming_distances_consecutive = Int[]
-
-    # Track proposed Hamming distances (before acceptance)
-    proposed_hamming_sum = 0
 
     # Store previous accepted state for Hamming distance
     prev_indices = copy(current_P_indices)
 
     for _ in 1:samples
         n_proposed += 1
-        old_indices = copy(current_P_indices)
 
-        current_P_indices, current_state, current_weight, accepted, prop_hamming = k_local_update!(
+        current_P_indices, current_state, current_weight, accepted, accepted_hamming = k_local_update!(
             current_P_indices, current_state, current_weight, psi0, k, N
         )
 
-        proposed_hamming_sum += prop_hamming
-
-        if accepted && prop_hamming > 0
+        if accepted && accepted_hamming > 0
             n_accepted += 1
-            # Compute Hamming distance from previous state
-            h_dist = hamming_distance(prev_indices, current_P_indices)
-            push!(hamming_distances_consecutive, h_dist)
+            # Only record Hamming distance for accepted non-trivial moves
+            push!(hamming_distances_consecutive, accepted_hamming)
             prev_indices = copy(current_P_indices)
-        elseif accepted && prop_hamming == 0
+        elseif accepted && accepted_hamming == 0
             # Trivial acceptance (no change proposed)
             n_accepted += 1
         end
+        # Rejected moves: don't count anything
     end
 
     # Compute statistics
     acceptance_rate = n_accepted / n_proposed
 
-    # Average Hamming distance per accepted move
-    avg_hamming_consecutive = isempty(hamming_distances_consecutive) ? 0.0 : mean(hamming_distances_consecutive)
-    std_hamming_consecutive = isempty(hamming_distances_consecutive) ? 0.0 : std(hamming_distances_consecutive)
+    # Average Hamming distance per accepted move (only counting accepted moves)
+    avg_hamming_accepted = isempty(hamming_distances_consecutive) ? 0.0 : mean(hamming_distances_consecutive)
+    std_hamming_accepted = isempty(hamming_distances_consecutive) ? 0.0 : std(hamming_distances_consecutive)
 
-    # Average proposed Hamming distance (how many sites would change if accepted)
-    avg_proposed_hamming = proposed_hamming_sum / n_proposed
-
-    # Effective Hamming distance per step = acceptance_rate * avg_hamming_per_accepted_move
-    effective_hamming_per_step = acceptance_rate * avg_hamming_consecutive
+    # Number of non-trivial accepted moves
+    n_nontrivial_accepted = length(hamming_distances_consecutive)
 
     return (
         k = k,
         acceptance_rate = acceptance_rate,
-        avg_hamming_consecutive = avg_hamming_consecutive,
-        std_hamming_consecutive = std_hamming_consecutive,
-        avg_proposed_hamming = avg_proposed_hamming,
-        effective_hamming_per_step = effective_hamming_per_step,
-        n_accepted = n_accepted,
+        avg_hamming_accepted = avg_hamming_accepted,
+        std_hamming_accepted = std_hamming_accepted,
+        n_nontrivial_accepted = n_nontrivial_accepted,
         n_proposed = n_proposed
     )
 end
@@ -264,27 +254,23 @@ function k_local_update_test(;
         @printf "Testing k = %d local updates...\n" k
 
         # Run multiple times and average
-        acc_rates = Float64[]
         avg_hammings = Float64[]
-        effective_hammings = Float64[]
+        n_accepted_list = Int[]
 
         for run in 1:n_runs
             res = run_k_local_test(
                 N=N, h=h, k=k, samples=samples, thermalization=thermalization
             )
-            push!(acc_rates, res.acceptance_rate)
-            push!(avg_hammings, res.avg_hamming_consecutive)
-            push!(effective_hammings, res.effective_hamming_per_step)
+            push!(avg_hammings, res.avg_hamming_accepted)
+            push!(n_accepted_list, res.n_nontrivial_accepted)
         end
 
         push!(results, (
             k = k,
-            acceptance_rate_mean = mean(acc_rates),
-            acceptance_rate_std = std(acc_rates),
             avg_hamming_mean = mean(avg_hammings),
             avg_hamming_std = std(avg_hammings),
-            effective_hamming_mean = mean(effective_hammings),
-            effective_hamming_std = std(effective_hammings)
+            n_accepted_mean = mean(n_accepted_list),
+            n_accepted_std = std(n_accepted_list)
         ))
     end
 
@@ -296,11 +282,11 @@ function k_local_update_test(;
     println()
 
     # Header
-    @printf "%-5s | %-20s | %-20s | %-20s\n" "k" "Acceptance Rate" "Avg Hamming Dist" "Effective Hamming/Step"
-    println("-" ^ 80)
+    @printf "%-5s | %-25s | %-25s\n" "k" "Avg Hamming (accepted)" "Num Accepted Moves"
+    println("-" ^ 65)
 
     for r in results
-        @printf "%-5d | %7.4f ± %-10.4f | %7.4f ± %-10.4f | %7.4f ± %-10.4f\n" r.k r.acceptance_rate_mean r.acceptance_rate_std r.avg_hamming_mean r.avg_hamming_std r.effective_hamming_mean r.effective_hamming_std
+        @printf "%-5d | %8.4f ± %-14.4f | %8.1f ± %-14.1f\n" r.k r.avg_hamming_mean r.avg_hamming_std r.n_accepted_mean r.n_accepted_std
     end
 
     println()
@@ -308,18 +294,14 @@ function k_local_update_test(;
     println("INTERPRETATION")
     println("=" ^ 80)
     println("""
-    - Acceptance Rate: Fraction of proposed moves that are accepted
-    - Avg Hamming Dist: Average number of sites changed per accepted move
-    - Effective Hamming/Step: acceptance_rate × avg_hamming_dist
-      This measures the average "distance traveled" in configuration space per MCMC step.
-      Higher values indicate better mixing efficiency.
+    - Avg Hamming (accepted): Average number of sites changed per accepted move
+      This only counts accepted moves - rejected moves contribute nothing.
+    - Num Accepted Moves: Total number of non-trivial accepted moves out of $samples proposals
 
-    Key insights:
-    - k=1 updates typically have high acceptance but move only 1 site at a time
-    - Larger k updates can move more sites but may have lower acceptance
-    - The effective Hamming/step balances these tradeoffs
-    - If effective Hamming/step increases with k, larger updates improve mixing
-    - If it decreases, smaller updates are more efficient
+    Key insight:
+    - For k-local update, when accepted, the Hamming distance should be close to k
+      (slightly less due to some sites randomly proposing the same value)
+    - The metric shows how much the configuration actually changes per accepted move
     """)
 
     return results
