@@ -614,26 +614,170 @@ function sweep_h_parameter(;
 end
 
 # ============================================================
+# System size scaling test
+# ============================================================
+
+"""
+Test how k-local update performance scales with system size N.
+"""
+function system_size_scaling(;
+    N_values::Vector{Int}=[4, 6, 8, 10],
+    h::Float64=1.0,
+    max_k::Int=5,
+    samples::Int=3000,
+    thermalization::Int=500,
+    n_runs::Int=3
+)
+    println("=" ^ 90)
+    println("System Size Scaling: N = $(N_values)")
+    println("=" ^ 90)
+    @printf "h = %.2f, samples = %d, thermalization = %d, runs = %d\n" h samples thermalization n_runs
+    println("=" ^ 90)
+    println()
+
+    all_results = Dict{Int, Vector{NamedTuple}}()
+
+    for N in N_values
+        @printf "N = %d: " N
+        # Limit max_k to N
+        actual_max_k = min(max_k, N)
+        results_for_N = []
+
+        for k in 1:actual_max_k
+            avg_hammings = Float64[]
+            acc_rates = Float64[]
+            pauli_weights = Float64[]
+
+            for run in 1:n_runs
+                res = run_k_local_test(N=N, h=h, k=k, samples=samples, thermalization=thermalization)
+                push!(avg_hammings, res.avg_hamming_accepted)
+                push!(acc_rates, res.acceptance_rate)
+            end
+
+            # Also measure Pauli string Hamming weight for this N
+            pw_res = measure_pauli_hamming_weight(N=N, h=h, k=k, samples=samples, thermalization=thermalization)
+
+            push!(results_for_N, (
+                k = k,
+                avg_hamming = mean(avg_hammings),
+                acceptance_rate = mean(acc_rates),
+                normalized_acc = mean(acc_rates) / (3/4)^k,
+                pauli_weight = pw_res.avg_hamming_weight,
+                pauli_weight_normalized = pw_res.avg_hamming_weight / N  # Normalize by system size
+            ))
+            print("k=$k ")
+        end
+        println("done")
+
+        all_results[N] = results_for_N
+    end
+
+    # Print summary tables
+    println()
+    println("=" ^ 90)
+    println("NORMALIZED ACCEPTANCE RATE BY N AND k")
+    println("=" ^ 90)
+
+    # Header
+    print(@sprintf "%-4s |" "N")
+    for k in 1:max_k
+        print(@sprintf " k=%-6d |" k)
+    end
+    println()
+    println("-" ^ (6 + 10 * max_k))
+
+    for N in N_values
+        print(@sprintf "%-4d |" N)
+        for r in all_results[N]
+            print(@sprintf " %7.4f |" r.normalized_acc)
+        end
+        # Fill empty columns if max_k > N
+        for _ in (length(all_results[N])+1):max_k
+            print("     -    |")
+        end
+        println()
+    end
+
+    println()
+    println("=" ^ 90)
+    println("PAULI STRING HAMMING WEIGHT (NORMALIZED BY N)")
+    println("=" ^ 90)
+
+    # Header
+    print(@sprintf "%-4s |" "N")
+    for k in 1:max_k
+        print(@sprintf " k=%-6d |" k)
+    end
+    println()
+    println("-" ^ (6 + 10 * max_k))
+
+    for N in N_values
+        print(@sprintf "%-4d |" N)
+        for r in all_results[N]
+            print(@sprintf " %7.4f |" r.pauli_weight_normalized)
+        end
+        for _ in (length(all_results[N])+1):max_k
+            print("     -    |")
+        end
+        println()
+    end
+
+    println()
+    println("=" ^ 90)
+    println("AVERAGE HAMMING DISTANCE (ACCEPTED) BY N AND k")
+    println("=" ^ 90)
+
+    # Header
+    print(@sprintf "%-4s |" "N")
+    for k in 1:max_k
+        print(@sprintf " k=%-6d |" k)
+    end
+    println()
+    println("-" ^ (6 + 10 * max_k))
+
+    for N in N_values
+        print(@sprintf "%-4d |" N)
+        for r in all_results[N]
+            print(@sprintf " %7.4f |" r.avg_hamming)
+        end
+        for _ in (length(all_results[N])+1):max_k
+            print("     -    |")
+        end
+        println()
+    end
+
+    println()
+    println("Interpretation:")
+    println("  - Normalized acceptance should be roughly constant across N if the")
+    println("    Pauli distribution structure is similar at all system sizes")
+    println("  - Pauli weight / N tells us the fraction of sites with non-identity Paulis")
+    println("  - If this is constant, the 'Pauli density' is size-independent")
+    println()
+
+    return all_results
+end
+
+# ============================================================
 # Run the test
 # ============================================================
 
 if abspath(PROGRAM_FILE) == @__FILE__
-    # Run the main test with more samples to check scaling
-    println("PART 1: Scaling test with more samples")
+    # Part 1: System size scaling (this is the main new test)
+    println("PART 1: System Size Scaling (N = 4, 6, 8, 10)")
     println("=" ^ 80)
-    results = k_local_update_test(N=6, h=1.0, max_k=5, samples=5000, thermalization=1000, n_runs=5)
+    scaling_results = system_size_scaling(
+        N_values=[4, 6, 8, 10],
+        h=1.0,
+        max_k=5,
+        samples=3000,
+        thermalization=500,
+        n_runs=3
+    )
 
-    println()
-    println("Additional mixing analysis (Hamming distance from reference state):")
-    println("-" ^ 60)
-    for k in 1:5
-        analyze_mixing(N=6, h=1.0, k=k, samples=5000, thermalization=1000)
-    end
-
-    # Sweep h parameter around critical region (h=0 has zero magic, importance sampling fails)
+    # Part 2: Parameter sweep at N=6 (quicker reference)
     println()
     println()
-    println("PART 2: Parameter sweep over h (around critical region h≈1)")
+    println("PART 2: Parameter sweep over h (N=6, around critical region h≈1)")
     sweep_results = sweep_h_parameter(
         N=6,
         h_values=[0.8, 0.9, 1.0, 1.1, 1.2],
@@ -643,15 +787,15 @@ if abspath(PROGRAM_FILE) == @__FILE__
         n_runs=3
     )
 
-    # Part 3: Pauli string Hamming weight analysis
+    # Part 3: Pauli string Hamming weight analysis at N=6
     println()
     println()
-    println("PART 3: Pauli String Hamming Weight (number of non-I Paulis)")
+    println("PART 3: Pauli String Hamming Weight (N=6)")
     pauli_weight_results = sweep_pauli_hamming_weight(
         N=6,
         h_values=[0.8, 0.9, 1.0, 1.1, 1.2],
         k=2,
-        samples=5000,
-        thermalization=1000
+        samples=3000,
+        thermalization=500
     )
 end
