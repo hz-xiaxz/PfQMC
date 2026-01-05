@@ -931,3 +931,101 @@ Test with actual M_12 and M_34 mixing:
 | `nReplicas=4, no mixing` | Independent replicas | Statistical equivalence |
 | `nReplicas=4, with mixing` | Off-diagonal blocks | Non-zero G_12, G_21 |
 | `nReplicas=4, with mixing` | Zero blocks | G_13, G_14, etc. = 0 |
+## Implementation Q&A (Post-Review)
+
+### 1. Auxiliary Field Access (`*s[replica]`)
+**Question:** What is the syntax `(*s[replica])(idxAux)`?
+**Answer:** 
+- `s` is defined as `std::vector<iVecType*> s`.
+- `s[replica]` returns the pointer `iVecType*` for that replica.
+- `*s[replica]` dereferences it to get the actual vector `iVecType`.
+- `(*s[replica])(idxAux)` accesses the element at `idxAux`.
+This structure allows each replica to have its own independent auxiliary field array while maintaining pointer stability.
+
+### 2. Green's Function Block Access
+**Question:** Should we use `g.block()` instead of global indices `g(idx1_g, idx2_g)`?
+**Answer:** 
+- `idx1_g = replica * nDimSingle + idx1`.
+- Accessing `g(idx1_g, idx2_g)` is mathematically equivalent to accessing `g_block(idx1, idx2)`.
+- For single-element access (scalar updates), direct global indexing is efficient and standard in Eigen.
+- `g.block()` is typically used when performing matrix operations (matrix-matrix or matrix-vector multiplication) on the whole block.
+
+### 3. Sign Updates in Loops
+**Question:** How is `signCur` changed in the update loop?
+**Answer:** 
+- `signCur` is passed by **reference** (`DataType& signCur`) to `singleFlip`.
+- Inside `singleFlip`, if a move is accepted, `signCur` is updated: `signCur *= (r / std::abs(r))`.
+- The loop calls `singleFlip` sequentially, so `signCur` accumulates the sign changes from all accepted flips in that sweep step.
+
+### 4. Injecting the Mixing Operator
+**Question:** Where do I insert the `mixingOp`?
+**Answer:** 
+- It is passed in the `PfQMC` constructor:
+  ```cpp
+  PfQMC(walker, stb, nReplicas, mixingOp);
+  ```
+- You create the `MixingOperator` instance (e.g., in `main.cpp`) and pass its pointer when creating the `PfQMC` solver.
+
+### 5. `std::swap(Aseg, tmp)` in Sweeps
+**Question:** Is this the physical SWAP operator?
+**Answer:** 
+- **No.** This is a C++ optimization for the matrix multiplication chain $A_{seg} = B_l \dots B_0$.
+- We calculate `tmp = op * Aseg`, then `swap(Aseg, tmp)` to make `Aseg` the new result.
+- It swaps the underlying memory buffers of the Eigen matrices to avoid copying.
+- The physical replica SWAP is contained within the `MixingOperator` logic, not this variable swap.
+
+### 6. `mixingOp->right_propagate` at End of Sweep
+**Question:** What does this do?
+**Answer:** 
+- This handles the boundary condition at $\tau=0$ during the **left sweep**.
+- The left sweep evolves $G$ from $\tau=\beta$ down to $\tau=0$.
+- At $\tau=0$, the Green's function "flows" through the mixing operator $M$.
+- `right_propagate` performs the transformation $G' = M^{-1} G M$ (or equivalent for the specific definition), effectively moving the Green's function past the mixing operator so it is ready for the next right sweep or measurement.
+
+## Current Implementation Status (Jan 5, 2026)
+
+### Completed
+1.  **`inc/spinless_tV.h`**:
+    *   Updated `SpinlessVOperator` to support `nReplicas`.
+    *   Added `std::vector<iVecType*> s` to hold auxiliary fields for each replica.
+    *   Added `std::vector<MatType> B_replica` for per-replica interaction matrices.
+    *   Implemented `rebuildFullB()` to construct the block-diagonal `B` matrix.
+    *   Updated `update()` and `singleFlip()` to iterate over replicas and update them independently.
+    *   Updated `getGreensMat` and `getGreensMatInv` to return block-diagonal matrices.
+
+2.  **`inc/pfqmc.h`**:
+    *   Updated `PfQMC` class to accept `nReplicas` and `mixingOp`.
+    *   Updated `rightInit` and `leftInit` to apply the mixing operator at $\tau=0$.
+
+3.  **`src/pfqmc.cpp`**:
+    *   Updated constructor to initialize replica parameters.
+    *   Updated `rightSweep` to apply `mixingOp` at the beginning (before time evolution).
+    *   Updated `getSignRaw` to include `mixingOp` contribution to the sign.
+
+### 4. Block-Diagonal Optimization
+To address performance issues with $4N \times 4N$ dense matrix operations when replicas are decoupled (Identity mixing), a `assumeBlockDiagonal` flag was added to `SpinlessVOperator`.
+- **Mechanism**: When set to `true`, `singleFlip` updates only the $N \times N$ block corresponding to the active replica using BLAS `zgeru`.
+- **Performance**: Reduces update complexity from $O((4N)^2)$ to $O(N^2)$, restoring performance to $\approx 4 \times$ single-replica cost.
+- **Usage**: Enabled in `main_honeycomb_4replica` when mixing is trivial.
+
+4.  **`inc/mixing_operator.h`**:
+    *   Verified existence of `MixingOperator` class for coupling replicas.
+
+### Ambiguities / Pending Work
+1.  **`leftSweep` Mixing Logic**:
+    *   The application of the inverse mixing operator at the end of `leftSweep` (at $\tau=0$) is currently commented out in `src/pfqmc.cpp`.
+    *   **Status**: User requested to implement this part themselves ("leave this to me").
+    *   **Ambiguity**: The exact boundary condition and whether stabilization is needed for this step needs careful consideration.
+
+2.  **Stabilization with Mixing**:
+    *   The mixing operator is currently applied outside the main loop in `rightSweep`.
+    *   It is included in the UDT initialization in `rightInit` and `leftInit`.
+    *   **Ambiguity**: Ensure that the UDT decomposition remains stable when `mixingOp` is strong or has specific structures.
+
+3.  **`std::swap` Usage**:
+    *   The use of `std::swap(Aseg, tmp)` in `PfQMC` is an optimization for matrix multiplication chains. It is not the physical replica swap.
+
+### Ambiguity 1: Mixing Operator at $\tau=0$ in `leftSweep`
+**Issue:** The boundary condition for the mixing operator during the left sweep (backwards time evolution) is ambiguous. Specifically, should we just propagate the Green's function through $M^{-1}$, or should we also include $M^{-1}$ in the UDT stabilization segment?
+**Current Implementation Choice:** We treat the mixing operator as part of the first time segment (at $l=0$) and **enforce stabilization**.
+**Reasoning:** This ensures numerical stability and treats the mixing operator consistently with other operators in the chain. However, this is a design choice that may need revisiting if performance issues or boundary artifacts arise.

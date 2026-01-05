@@ -131,6 +131,61 @@ public:
         return r;
     }
 
+    // Calculate energy for a specific replica
+    inline DataType energyFromGreensFuncReplica(const MatType &g, int replica, int nDimSingle) {
+        // Extract the block for this replica
+        // Since g is block diagonal (mostly), we can just use global indices
+        // But we need to offset the indices by replica * nDimSingle
+        int offset = replica * nDimSingle;
+        
+        DataType r = 0.0;
+        DataType tmp = (0.5i);
+        int idx1, idx2;
+        for (int i=0; i<Lx; i++) {
+            for (int j=0; j<Ly; j++) {
+                for (int k=0; k<2; k++) {
+                    idx1 = offset + majoranaCoord2Idx(i, j, 0, k);
+                    idx2 = offset + majoranaCoord2Idx(i, j, 1, k);
+                    r += tmp * g(idx1, idx2);
+                    idx2 = offset + majoranaCoord2Idx((i+1) % Lx, j, 1, k);
+                    r += tmp * g(idx1, idx2);
+                    idx2 = offset + majoranaCoord2Idx(i, (j+1) % Ly, 1, k);
+                    r += tmp * g(idx1, idx2);
+                }
+            }
+        }
+
+        int idxi1, idxi2, idxj1, idxj2;
+        tmp = (0.25) * V;
+        for (int i=0; i<Lx; i++) {
+            for (int j=0; j<Ly; j++) {
+                for (int btype=0; btype<3; btype++) {
+                    idxi1 = offset + majoranaCoord2Idx(i, j, 0, 0); // i1
+                    idxi2 = offset + majoranaCoord2Idx(i, j, 0, 1); // i2
+                    idxj1 = offset + neighborSiteIdx(i, j, 0, btype); // j1
+                    idxj2 = offset + neighborSiteIdx(i, j, 1, btype); // j2
+                    r += tmp * g(idxi1, idxj1) * g(idxi2, idxj2);
+                    r += tmp * g(idxi1, idxj2) * g(idxj1, idxi2);
+                    r -= tmp * g(idxi1, idxi2) * g(idxj1, idxj2);
+                }
+            }
+        }
+        return r;
+    }
+
+    // Calculate Renyi entropy S2 = -ln(Tr(rho^2))
+    // This requires the expectation value of the SWAP operator
+    // <SWAP> = Pf(G_connected) / Pf(G_disconnected) ? 
+    // Actually, with the replica trick, we measure the expectation value of the SWAP operator
+    // which is related to the Green's function elements connecting the replicas.
+    // But here we might just want to measure simple inter-replica correlations first.
+    
+    inline DataType interReplicaCorrelation(const MatType &g, int r1, int r2, int nDimSingle) {
+        // Measure < i gamma_r1 gamma_r2 > ? 
+        // Just a placeholder for now.
+        return 0.0;
+    }
+
     // Generate the H-S transformed Hamiltonian
     // in principle ONLY be used for testing
     inline void InteractionHGenerator(MatType &H, const iVecType &s, const int bondType) const {

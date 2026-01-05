@@ -2,10 +2,14 @@
 #include <fstream>
 #include <iomanip>
 
-PfQMC::PfQMC(Spinless_tV *walker, int _stb)
+PfQMC::PfQMC(Spinless_tV *walker, int _stb, int _nReplicas, Operator* _mixingOp)
 {
     stb = _stb;
+    nReplicas = _nReplicas;
+    nDimSingle = walker->nDimSingle;
     nDim = walker->nDim;
+    mixingOp = _mixingOp;
+    
     g = MatType::Identity(nDim, nDim);
     op_array = walker->op_array;
     op_length = op_array.size();
@@ -35,6 +39,14 @@ void PfQMC::rightSweep()
     MatType Aseg = MatType::Identity(nDim, nDim);
     int curSeg = 0;
     DataType signCur;
+
+    // Apply mixing operator at τ=0 first if it exists
+    if (mixingOp != nullptr) {
+        mixingOp->left_propagate(g, tmp);
+        mixingOp->left_multiply(Aseg, tmp);
+        std::swap(Aseg, tmp);
+    }
+
     for (int l = 0; l < op_length; l++)
     {
         signCur = op_array[l]->update(g);
@@ -92,6 +104,16 @@ void PfQMC::leftSweep()
         
         op_array[l]->right_multiply(Aseg, tmp);
         std::swap(Aseg, tmp);
+
+        // Apply mixing operator at l=0 (end of time evolution in this direction)
+        // AMBIGUITY: Should we stabilize here or just propagate?
+        // Current decision: Include mixingOp in the segment and allow stabilization to happen naturally
+        // if need_stabilization[0] is true (which it usually is).
+        if (l == 0 && mixingOp != nullptr) {
+            mixingOp->right_propagate(g, tmp);
+            mixingOp->right_multiply(Aseg, tmp);
+            std::swap(Aseg, tmp);
+        }
         if (need_stabilization[l])
         {
             // auto g2 = g;
@@ -120,6 +142,7 @@ void PfQMC::leftSweep()
             // std::cout<<"left g recal "<<(g2-g).norm()<<std::endl;
         }
     }
+
 }
 
 DataType PfQMC::getSignRaw()
@@ -127,10 +150,21 @@ DataType PfQMC::getSignRaw()
     const MatType identity = MatType::Identity(nDim, nDim);
     const DataType extraSign = ((nDim / 2) % 2 == 0) ? 1.0 : -1.0;
     UDT A(nDim);
+    
+    // Start with mixing operator if it exists
+    if (mixingOp != nullptr) {
+        mixingOp->stabilizedLeftMultiply(A);
+    }
+    
     op_array[0]->stabilizedLeftMultiply(A);
     MatType gNext, gCur;
     DataType signCur, signNext, signPfaf;
+    
     signCur = op_array[0]->getSignOfWeight();
+    if (mixingOp != nullptr) {
+        signCur *= mixingOp->getSignOfWeight();
+    }
+    
     A.onePlusInv(gCur);
     gCur -= identity;
     for (int i = 1; i < op_length; i++)

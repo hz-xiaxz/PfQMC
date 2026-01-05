@@ -148,48 +148,114 @@ class SpinlessVOperator : public Operator {
    public:
     // const int nUnitcell;
     const int bondType;
-    // const int Naux; // number of auxillary fields (live on bonds)
-    const int nDim;  // dimension of hamiltonian, number of sites × 2 (number of
-                     // majorana species)
+
+    // ===== Replica support =====
+    // ===== Replica support =====
+    const int nReplicas;    // Number of replicas (default 1 for backward compatibility)
+    const int nDimSingle;   // Single-replica dimension
+    const int nDim;         // Total dimension = nReplicas * nDimSingle
 
     const int hsScheme; // 0: hopping channel, 1: density channel
-    iVecType *s;
+
+    // For multi-replica: vector of aux field pointers (one per replica)
+    std::vector<iVecType*> s;
+
+    // Per-replica B matrices (each nDimSingle × nDimSingle)
+    std::vector<MatType> B_replica;
+
+    // Full block-diagonal B matrix (nDim × nDim)
     MatType B;
     MatType B_inv;
     rdGenerator *rd;
+    bool assumeBlockDiagonal = false; // Optimization flag
 
     const bool singleMaj;
 
-    // _s: aux fields, Z_2 variable, length = nUnitcell
-    SpinlessVOperator(const SpinlessTvUtils *_config, iVecType *_s,
-                      int _bondType, rdGenerator *_rd)
+    // Multi-replica constructor
+    // _s: vector of aux field pointers, one per replica
+    SpinlessVOperator(const SpinlessTvUtils *_config,
+                      std::vector<iVecType*> _s,
+                      int _bondType,
+                      rdGenerator *_rd,
+                      int _nReplicas = 1)
         : config(_config),
           etaM(_config->etaM),
           bondType(_bondType),
-          nDim(config->nDim),
+          nReplicas(_nReplicas),
+          nDimSingle(_config->nDim),
+          nDim(_nReplicas * _config->nDim),
           singleMaj(_config->singleMaj),
           hsScheme(_config->hsScheme) {
+        assert(static_cast<int>(_s.size()) == _nReplicas);
         s = _s;
         rd = _rd;
-        B = MatType::Identity(nDim, nDim);
-        config->InteractionBGenerator(B, *s, bondType, false);
+
+        // Initialize per-replica B matrices
+        B_replica.resize(nReplicas);
+        for (int r = 0; r < nReplicas; r++) {
+            B_replica[r] = MatType::Identity(nDimSingle, nDimSingle);
+            config->InteractionBGenerator(B_replica[r], *s[r], bondType, false);
+        }
+
+        // Build full block-diagonal B
+        rebuildFullB();
     }
 
-    ~SpinlessVOperator() { delete s; }
+    // Backward-compatible single-replica constructor
+    // _s: aux fields, Z_2 variable, length = nUnitcell
+    SpinlessVOperator(const SpinlessTvUtils *_config, iVecType *_s,
+                      int _bondType, rdGenerator *_rd)
+        : SpinlessVOperator(_config, std::vector<iVecType*>{_s}, _bondType, _rd, 1) {}
+
+    ~SpinlessVOperator() {
+        for (auto* ptr : s) {
+            delete ptr;
+        }
+    }
+
+    // Rebuild the full block-diagonal B matrix from per-replica matrices
+    void rebuildFullB() {
+        if (nReplicas == 1) {
+            B = B_replica[0];
+            return;
+        }
+
+        B = MatType::Zero(nDim, nDim);
+        for (int r = 0; r < nReplicas; r++) {
+            B.block(r * nDimSingle, r * nDimSingle, nDimSingle, nDimSingle) = B_replica[r];
+        }
+    }
 
     void reCalcInv() {
-        B_inv = MatType::Identity(nDim, nDim);
-        config->InteractionBGenerator(B_inv, *s, bondType, true);
+        if (nReplicas == 1) {
+            B_inv = MatType::Identity(nDimSingle, nDimSingle);
+            config->InteractionBGenerator(B_inv, *s[0], bondType, true);
+            return;
+        }
+
+        B_inv = MatType::Zero(nDim, nDim);
+        for (int r = 0; r < nReplicas; r++) {
+            MatType B_inv_r = MatType::Identity(nDimSingle, nDimSingle);
+            config->InteractionBGenerator(B_inv_r, *s[r], bondType, true);
+            B_inv.block(r * nDimSingle, r * nDimSingle, nDimSingle, nDimSingle) = B_inv_r;
+        }
+    }
+
+    void setAssumeBlockDiagonal(bool val) {
+        assumeBlockDiagonal = val;
     }
 
     // virtual inline void aux2MajoranaIdx(int idxAux, int imaj, int& idx1, int&
     // idx2) {};
 
-    void singleFlip(MatType &g, int idxAux, double rand, bool &flag,
+    void singleFlip(MatType &g, int replica, int idxAux, double rand, bool &flag,
                     DataType &signCur) {
+        // Compute offset for this replica in the global matrix
+        int offset = replica * nDimSingle;
+        
         DataType r;
         // auto m = mConfig->idxCell2Coord(idxCell);
-        int auxCur = (*s)(idxAux);
+        int auxCur = (*s[replica])(idxAux);
         int idx1, idx2, idx3, idx4;
         DataType tmp[2];
         const int inc = 1;
@@ -197,27 +263,33 @@ class SpinlessVOperator : public Operator {
 
         config->aux2MajoranaIdx(idxAux, 0, bondType, idx1, idx2); // 1j, 1k
         config->aux2MajoranaIdx(idxAux, 1, bondType, idx3, idx4); // 2j, 2k
+        
+        // Convert to global indices
+        int idx1_g = offset + idx1;
+        int idx2_g = offset + idx2;
+        int idx3_g = offset + idx3;
+        int idx4_g = offset + idx4;
 
         if (hsScheme == 0) {
             tmp[0] =
-                (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx1, idx2)));
+                (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx1_g, idx2_g)));
             tmp[1] =
-                (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx3, idx4)));
+                (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx3_g, idx4_g)));
             r = tmp[0] * tmp[1];
             // std::cout << "r1" << r << " ";
-            r += (config->thlV * config->thlV) * ((g(idx1, idx3) * g(idx2, idx4)) -
-                                                (g(idx2, idx3) * g(idx1, idx4)));
+            r += (config->thlV * config->thlV) * ((g(idx1_g, idx3_g) * g(idx2_g, idx4_g)) -
+                                                (g(idx2_g, idx3_g) * g(idx1_g, idx4_g)));
             // std::cout << " r2" << r << "\n";
             r *= etaM;
         } else if (hsScheme == 1) {
             tmp[0] =
-                (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx1, idx3)));
+                (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx1_g, idx3_g)));
             tmp[1] =
-                (1.0 + ((1.0i) * (config->thlV) * double(auxCur) * g(idx2, idx4)));
+                (1.0 + ((1.0i) * (config->thlV) * double(auxCur) * g(idx2_g, idx4_g)));
             r = tmp[0] * tmp[1];
             // std::cout << "r1" << r << " ";
-            r -= (config->thlV * config->thlV) * ((g(idx1, idx2) * g(idx3, idx4)) -
-                                                (g(idx3, idx2) * g(idx1, idx4)));
+            r -= (config->thlV * config->thlV) * ((g(idx1_g, idx2_g) * g(idx3_g, idx4_g)) -
+                                                (g(idx3_g, idx2_g) * g(idx1_g, idx4_g)));
             // std::cout << " r2" << r << "\n";
             r *= etaM;
         }
@@ -243,26 +315,85 @@ class SpinlessVOperator : public Operator {
             if (hsScheme == 0) {
                 for (int imaj = 0; imaj < 2; imaj++) {
                     config->aux2MajoranaIdx(idxAux, imaj, bondType, idx1, idx2);
+                    int idx1_g = offset + idx1;
+                    int idx2_g = offset + idx2;
+                    
                     if (imaj == 1) {
                         tmp[1] = (1.0 - ((1.0i) * (config->thlV) * double(auxCur) *
-                                        g(idx1, idx2)));
+                                        g(idx1_g, idx2_g)));
                     }
                     // update aux field and B matrix
-                    (*s)(idxAux) = -auxCur;
-                    B(idx1, idx2) = -B(idx1, idx2);
-                    B(idx2, idx1) = -B(idx2, idx1);
+                    (*s[replica])(idxAux) = -auxCur;
+                    B_replica[replica](idx1, idx2) = -B_replica[replica](idx1, idx2);
+                    B_replica[replica](idx2, idx1) = -B_replica[replica](idx2, idx1);
 
                     // update Green's function
-                    cVecType x1 = -g.col(idx1);
-                    cVecType x2 = -g.col(idx2);
-                    x1(idx1) += 2;
-                    x2(idx2) += 2;
-                    alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp[imaj];
-                    zgeru(&nDim, &nDim, &alpha, x1.data(), &inc, x2.data(), &inc,
-                        g.data(), &nDim);
-                    alpha = -alpha;
-                    zgeru(&nDim, &nDim, &alpha, x2.data(), &inc, x1.data(), &inc,
-                        g.data(), &nDim);
+                    if (assumeBlockDiagonal) {
+                        // Optimized update for block diagonal case
+                        // Only update the block corresponding to this replica
+                        // Indices are already local to the block if we subtract offset?
+                        // No, idx1_g is global. We need to map it to local or use block operations.
+                        // Actually, since g is stored as one large matrix, we just need to limit the 
+                        // rank-1 update to the columns/rows of this replica.
+                        
+                        // x1 and x2 are columns. We only need the segment [offset, offset+nDimSingle]
+                        // But g.col() returns the whole column.
+                        // We can manually implement the update loop over the relevant range.
+                        
+                        int startIdx = offset;
+                        int endIdx = offset + nDimSingle;
+                        int localDim = nDimSingle;
+                        
+                        // We need x1 and x2 segments.
+                        // x1 = -g.col(idx1_g) + 2*e_{idx1_g}
+                        // x2 = -g.col(idx2_g) + 2*e_{idx2_g}
+                        
+                        // Optimized update for block diagonal case
+                        // Only update the block corresponding to this replica
+                        
+                        // We need x1 and x2 segments.
+                        // x1 = -g.col(idx1_g) + 2*e_{idx1_g}
+                        // x2 = -g.col(idx2_g) + 2*e_{idx2_g}
+                        
+                        // Extract relevant segments of columns to local vectors
+                        cVecType x1_seg = -g.col(idx1_g).segment(offset, nDimSingle);
+                        cVecType x2_seg = -g.col(idx2_g).segment(offset, nDimSingle);
+                        
+                        x1_seg(idx1) += 2.0; // idx1 is local index
+                        x2_seg(idx2) += 2.0; // idx2 is local index
+                        
+                        alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp[imaj];
+                        
+                        // Rank-1 update on the block: G_block += alpha * x1 * x2^T
+                        // We use zgeru. The block starts at (offset, offset).
+                        // The leading dimension (stride between columns) is nDim (total dimension).
+                        DataType* g_block_ptr = g.data() + offset + offset * nDim;
+                        
+                        zgeru(&nDimSingle, &nDimSingle, reinterpret_cast<MKL_Complex16*>(&alpha), 
+                              reinterpret_cast<MKL_Complex16*>(x1_seg.data()), &inc, 
+                              reinterpret_cast<MKL_Complex16*>(x2_seg.data()), &inc,
+                              reinterpret_cast<MKL_Complex16*>(g_block_ptr), &nDim);
+                        
+                        alpha = -alpha;
+                        // Rank-1 update: G_block += -alpha * x2 * x1^T
+                        zgeru(&nDimSingle, &nDimSingle, reinterpret_cast<MKL_Complex16*>(&alpha), 
+                              reinterpret_cast<MKL_Complex16*>(x2_seg.data()), &inc, 
+                              reinterpret_cast<MKL_Complex16*>(x1_seg.data()), &inc,
+                              reinterpret_cast<MKL_Complex16*>(g_block_ptr), &nDim);
+                            
+                    } else {
+                        // Full dense update (original)
+                        cVecType x1 = -g.col(idx1_g);
+                        cVecType x2 = -g.col(idx2_g);
+                        x1(idx1_g) += 2;
+                        x2(idx2_g) += 2;
+                        alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp[imaj];
+                        zgeru(&nDim, &nDim, &alpha, x1.data(), &inc, x2.data(), &inc,
+                            g.data(), &nDim);
+                        alpha = -alpha;
+                        zgeru(&nDim, &nDim, &alpha, x2.data(), &inc, x1.data(), &inc,
+                            g.data(), &nDim);
+                    }
                 }
             } else if (hsScheme == 1) {
                 int idxj1, idxk1, idxj2, idxk2;
@@ -276,19 +407,21 @@ class SpinlessVOperator : public Operator {
                         idx1 = idxk1;
                         idx2 = idxk2;
                         tmp[1] = (1.0 + ((1.0i) * (config->thlV) * double(auxCur) *
-                                        g(idx1, idx2)));
+                                        g(idx1_g, idx2_g)));
                     }
+                    int idx1_g = offset + idx1;
+                    int idx2_g = offset + idx2;
 
                     // update aux field and B matrix
-                    (*s)(idxAux) = -auxCur;
-                    B(idx1, idx2) = -B(idx1, idx2);
-                    B(idx2, idx1) = -B(idx2, idx1);
+                    (*s[replica])(idxAux) = -auxCur;
+                    B_replica[replica](idx1, idx2) = -B_replica[replica](idx1, idx2);
+                    B_replica[replica](idx2, idx1) = -B_replica[replica](idx2, idx1);
 
                     // update Green's function
-                    cVecType x1 = -g.col(idx1);
-                    cVecType x2 = -g.col(idx2);
-                    x1(idx1) += 2;
-                    x2(idx2) += 2;
+                    cVecType x1 = -g.col(idx1_g);
+                    cVecType x2 = -g.col(idx2_g);
+                    x1(idx1_g) += 2;
+                    x2(idx2_g) += 2;
                     alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp[iaux];
                     if (iaux == 1) alpha = -alpha;
                     zgeru(&nDim, &nDim, &alpha, x1.data(), &inc, x2.data(), &inc,
@@ -301,19 +434,23 @@ class SpinlessVOperator : public Operator {
         }
     };
 
-    void singleFlipSingleMajorana(MatType &g, int idxAux, double rand,
+    void singleFlipSingleMajorana(MatType &g, int replica, int idxAux, double rand,
                                   bool &flag, DataType &signCur) {
+        int offset = replica * nDimSingle;
         DataType r;
         // auto m = mConfig->idxCell2Coord(idxCell);
-        int auxCur = (*s)(idxAux);
+        int auxCur = (*s[replica])(idxAux);
         int idx1, idx2;
         DataType tmp;
         const int inc = 1;
         DataType alpha;
 
         config->aux2MajoranaIdx(idxAux, 0, bondType, idx1, idx2);
+        int idx1_g = offset + idx1;
+        int idx2_g = offset + idx2;
+        
         tmp =
-            (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx1, idx2)));
+            (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx1_g, idx2_g)));
         r = tmp * tmp * etaM;
 
         flag = rand < std::abs(r);
@@ -324,15 +461,15 @@ class SpinlessVOperator : public Operator {
             signCur *= (tmp / std::abs(tmp));
             config->aux2MajoranaIdx(idxAux, 0, bondType, idx1, idx2);
             // update aux field and B matrix
-            (*s)(idxAux) = -auxCur;
-            B(idx1, idx2) = -B(idx1, idx2);
-            B(idx2, idx1) = -B(idx2, idx1);
+            (*s[replica])(idxAux) = -auxCur;
+            B_replica[replica](idx1, idx2) = -B_replica[replica](idx1, idx2);
+            B_replica[replica](idx2, idx1) = -B_replica[replica](idx2, idx1);
 
             // update Green's function
-            cVecType x1 = -g.col(idx1);
-            cVecType x2 = -g.col(idx2);
-            x1(idx1) += 2;
-            x2(idx2) += 2;
+            cVecType x1 = -g.col(idx1_g);
+            cVecType x2 = -g.col(idx2_g);
+            x1(idx1_g) += 2;
+            x2(idx2_g) += 2;
             alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp;
             zgeru(&nDim, &nDim, &alpha, x1.data(), &inc, x2.data(), &inc,
                   g.data(), &nDim);
@@ -346,17 +483,21 @@ class SpinlessVOperator : public Operator {
         double rand;
         bool flag;
         DataType signCur = 1.0;
-        if (singleMaj) {
-            for (int i = 0; i < s->size(); i++) {
-                // random real between (0, 1)
-                rand = rd->rdUniform01();
-                singleFlipSingleMajorana(g, i, rand, flag, signCur);
-            }
-        } else {
-            for (int i = 0; i < s->size(); i++) {
-                // random real between (0, 1)
-                rand = rd->rdUniform01();
-                singleFlip(g, i, rand, flag, signCur);
+        
+        // Loop over all replicas
+        for (int r = 0; r < nReplicas; r++) {
+            if (singleMaj) {
+                for (int i = 0; i < s[r]->size(); i++) {
+                    // random real between (0, 1)
+                    rand = rd->rdUniform01();
+                    singleFlipSingleMajorana(g, r, i, rand, flag, signCur);
+                }
+            } else {
+                for (int i = 0; i < s[r]->size(); i++) {
+                    // random real between (0, 1)
+                    rand = rd->rdUniform01();
+                    singleFlip(g, r, i, rand, flag, signCur);
+                }
             }
         }
         return signCur;
@@ -381,18 +522,39 @@ class SpinlessVOperator : public Operator {
         g = gTmp * B;
     }
 
-    iVecType *getAuxField() override { return s; }
+    // Return the first replica's aux field for backward compatibility with single-replica code/tests
+    iVecType *getAuxField() override { return s[0]; }
 
     int getType() override { return bondType; }
 
     void getGreensMat(MatType &g) override {
+        if (nReplicas == 1) {
+            g = MatType::Zero(nDim, nDim);
+            config->InteractionTanhGenerator(g, *s[0], bondType, false);
+            return;
+        }
+
         g = MatType::Zero(nDim, nDim);
-        config->InteractionTanhGenerator(g, *s, bondType, false);
+        for (int r = 0; r < nReplicas; r++) {
+            MatType g_r = MatType::Zero(nDimSingle, nDimSingle);
+            config->InteractionTanhGenerator(g_r, *s[r], bondType, false);
+            g.block(r * nDimSingle, r * nDimSingle, nDimSingle, nDimSingle) = g_r;
+        }
     }
 
     void getGreensMatInv(MatType &g) override {
+        if (nReplicas == 1) {
+            g = MatType::Zero(nDim, nDim);
+            config->InteractionTanhGenerator(g, *s[0], bondType, true);
+            return;
+        }
+
         g = MatType::Zero(nDim, nDim);
-        config->InteractionTanhGenerator(g, *s, bondType, true);
+        for (int r = 0; r < nReplicas; r++) {
+            MatType g_r = MatType::Zero(nDimSingle, nDimSingle);
+            config->InteractionTanhGenerator(g_r, *s[r], bondType, true);
+            g.block(r * nDimSingle, r * nDimSingle, nDimSingle, nDimSingle) = g_r;
+        }
     }
 
     // inline DataType getSignPfGInv() override;
@@ -407,6 +569,7 @@ class Spinless_tV {
    public:
     std::vector<Operator *> op_array;
     int nDim;
+    int nDimSingle; // NEW: single replica dimension
     ~Spinless_tV() {
         for (int i = 0; i < op_array.size(); i++) {
             delete op_array[i];

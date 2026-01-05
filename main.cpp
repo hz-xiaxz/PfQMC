@@ -8,6 +8,7 @@
 #include "inc/square.h"
 #include "inc/singleMajoranaHoneycomb.h"
 #include "inc/kitaevChain.h"
+#include "inc/mixing_operator.h"
 
 void fixSign(DataType& sign, DataType signRaw, double threshold) {
     // unreliable signRaw
@@ -65,7 +66,7 @@ int main_honeycomb() {
         pfqmc.leftSweep();
         // check if the sign problem free condition is met
         if (std::abs(1.0 - pfqmc.sign) > 1e-2) {
-            std::cout << "\n=== error in sign at round = " << i << " sign = " << pfqmc.sign << " ≠ " << 1.0 << "==== \n"; 
+            std::cout << "\n=== error in sign at round = " << i << " sign = " << pfqmc.sign << " ≠ " << 1.0 << "==== \n";
         }
         // sign = pfqmc.getSignRaw();
         energy += sign * config.energyFromGreensFunc(pfqmc.g);
@@ -78,6 +79,67 @@ int main_honeycomb() {
 
     double time = omp_get_wtime() - start_time;
     std::cout << "total time " << time << std::endl;
+    return 0;
+}
+
+int main_honeycomb_param(int Lx, int Ly, int LTau, double dt, double V, int nthreads, int nseed, int evaluationLength, char* filename) {
+    double start_time = omp_get_wtime();
+    mkl_set_num_threads(nthreads);
+
+    std::fstream fout(filename, std::fstream::out);
+
+    int stabilizationTime = 10;
+    int thermalLength = 200;
+
+    fout << "=== Standard Honeycomb Model ===\n";
+    fout << "Lx = " << Lx << " Ly = " << Ly << " LTau = " << LTau << " dt = " << dt << " V = " << V << " seed = " << nseed << " nthreads = " << nthreads << " evaluationLength = " << evaluationLength << std::endl;
+
+    SpinlessTvHoneycombUtils config(Lx, Ly, dt, V, LTau);
+    rdGenerator rd(nseed);
+    Honeycomb_tV walker(&config, &rd);
+    PfQMC pfqmc(&walker, stabilizationTime);
+
+    for (int i = 0; i < thermalLength; i++) {
+        fout << i << " " << std::flush;
+        pfqmc.rightSweep();
+        pfqmc.leftSweep();
+    }
+    fout << std::endl;
+
+    DataType energy = 0.0;
+    DataType sign, signRaw;
+    DataType signTot = 0.0;
+    DataType energyTot = 0.0;
+
+    for (int i = 0; i < evaluationLength; i++) {
+        pfqmc.rightSweep();
+        pfqmc.leftSweep();
+        sign = pfqmc.sign;
+
+        if (i % 20 == 0) {
+            signRaw = pfqmc.getSignRaw();
+            double threshold = 1e-2;
+            if (std::abs(sign - signRaw) > threshold) {
+                fixSign(sign, signRaw, threshold);
+                pfqmc.sign = sign;
+            }
+        }
+
+        energy = config.energyFromGreensFunc(pfqmc.g);
+        energyTot += sign * energy;
+        signTot += sign;
+
+        fout << "iter = " << i << " energy = " << energy << " sign = " << sign << std::endl;
+
+        if ((i % 10) == 0)
+            std::cout << "iter = " << i << " energy=" << energyTot / signTot << " sign=" << signTot / double(i + 1) << "\n";
+    }
+
+    std::cout << "Final: AveEnergy = " << energyTot / signTot << " AveSign = " << signTot / double(evaluationLength) << std::endl;
+
+    double time = omp_get_wtime() - start_time;
+    fout << "=== End of Standard Honeycomb Model ===\n";
+    fout << "total time " << time << std::endl;
     return 0;
 }
 
@@ -148,6 +210,129 @@ int main_honeycombSingleMajorana(int Lx, int Ly, int LTau, double dt, double V, 
 
     double time = omp_get_wtime() - start_time;
     fout << "=== End of Honeycomb Single Majorana Model ===\n";
+    fout << "total time " << time << std::endl;
+    return 0;
+}
+
+int main_honeycomb_4replica(int Lx, int Ly, int LTau, double dt, double V, int nthreads, int nseed, int evaluationLength, char* filename) {
+    double start_time = omp_get_wtime();
+    mkl_set_num_threads(nthreads);
+
+    std::fstream fout(filename, std::fstream::out);
+
+    int stabilizationTime = 10;
+    int thermalLength = 200;
+    int nReplicas = 4;
+    
+    fout << "=== Honeycomb 4-Replica Model ===\n";
+    fout << "Lx = " << Lx << " Ly = " << Ly << " LTau = " << LTau << " dt = " << dt << " V = " << V << " seed = " << nseed << " nthreads = " << nthreads << " evaluationLength = " << evaluationLength << std::endl;
+    
+    SpinlessTvHoneycombUtils config(Lx, Ly, dt, V, LTau);
+    rdGenerator rd(nseed);
+    
+    // Create mixing operator (identity for now, or specific mixing)
+    // For Renyi entropy S2, we need SWAP operator between replicas
+    // But for now let's just use Identity to verify stability
+    int nDimSingle = config.nDim;
+    MatType I_pair = MatType::Identity(2 * nDimSingle, 2 * nDimSingle);
+    MixingOperator* mixingOp = new MixingOperator(nDimSingle, I_pair, I_pair);
+    
+    // Create walker with 4 replicas
+    // We need to modify Honeycomb_tV to support replicas or create a new one
+    // But Honeycomb_tV uses SpinlessVOperator which now supports replicas.
+    // However, Honeycomb_tV constructor initializes op_array with single replica operators.
+    // We need a way to initialize it with 4-replica operators.
+    
+    // For now, let's assume we can use a modified walker or just manually build op_array here?
+    // Or better, modify Honeycomb_tV to accept nReplicas.
+    
+    // Let's modify Honeycomb_tV in inc/honeycomb.h first to support nReplicas.
+    // But since I cannot modify header in this step, I will use a local construction here if possible
+    // or just note that Honeycomb_tV needs update.
+    
+    // Actually, Honeycomb_tV is simple enough to inline here or just use if updated.
+    // Let's assume Honeycomb_tV is NOT updated yet.
+    // I will construct the walker manually here for 4 replicas.
+    
+    int nSites = Lx * Ly * 2;
+    int nDim = nSites * 2; // single replica dimension
+    
+    MatType Ht(nDim, nDim);
+    config.KineticGenerator(Ht, 1.0);
+    MatType expK = expm(Ht, -dt);
+    MatType expKhalf = expm(Ht, -dt / 2.0);
+    
+    // Create 4-replica operators
+    std::vector<Operator*> op_array(4 * LTau + 1);
+    iVecType* s;
+    
+    // Helper to create 4-replica DenseOperator
+    auto createDenseOp = [&](const MatType& m) {
+        MatType m_full = MatType::Zero(4*nDim, 4*nDim);
+        for(int r=0; r<4; r++) m_full.block(r*nDim, r*nDim, nDim, nDim) = m;
+        return new DenseOperator(m_full, 1.0);
+    };
+
+    for (int i=0; i<LTau; i++) {
+        if (i == 0) {
+            op_array[0] = createDenseOp(expKhalf);
+        } else {
+            op_array[4*i] = createDenseOp(expK);
+        }
+
+        for (int j=0; j<3; j++) {
+            std::vector<iVecType*> s_vec(4);
+            for(int r=0; r<4; r++) {
+                s_vec[r] = new iVecType(Lx*Ly); // nUnitcell
+                for (int k=0; k<Lx*Ly; k++) (*s_vec[r])(k) = rd.rdZ2();
+            }
+            op_array[4*i + j + 1] = new SpinlessVOperator(&config, s_vec, j, &rd, 4);
+            ((SpinlessVOperator*)op_array[4*i + j + 1])->setAssumeBlockDiagonal(true);
+        }
+    }
+    op_array[4*LTau] = createDenseOp(expKhalf);
+    
+    // Create a temporary walker struct to pass to PfQMC
+    Spinless_tV walker;
+    walker.op_array = op_array;
+    walker.nDim = 4 * nDim; // Total dimension
+    walker.nDimSingle = nDim; // Single replica dimension
+    
+    PfQMC pfqmc(&walker, stabilizationTime, nReplicas, mixingOp);
+    
+    for (int i = 0; i < thermalLength; i++) {
+        fout << i << " " << std::flush;
+        pfqmc.rightSweep();
+        pfqmc.leftSweep();
+    }
+    fout << std::endl;
+
+    DataType energy = 0.0;
+    DataType sign = 1.0;
+    
+    for (int i = 0; i < evaluationLength; i++) {
+        pfqmc.rightSweep();
+        pfqmc.leftSweep();
+
+        // Simple energy measurement (averaged over replicas)
+        // We need to extract blocks from pfqmc.g
+        DataType currentEnergy = 0.0;
+        for(int r=0; r<nReplicas; r++) {
+            currentEnergy += config.energyFromGreensFuncReplica(pfqmc.g, r, nDim);
+        }
+        // currentEnergy /= nReplicas; // User requested total energy
+
+        energy += currentEnergy;
+
+        if ((i % 10) == 0)
+            std::cout << "iter = " << i << " energy=" << energy / double(i + 1) << "\n";
+
+        fout << "iter = " << i << " energy = " << currentEnergy << std::endl;
+    }
+
+    std::cout << "Final: AveEnergy = " << energy / double(evaluationLength) << std::endl;
+
+    double time = omp_get_wtime() - start_time;
     fout << "total time " << time << std::endl;
     return 0;
 }
@@ -382,6 +567,39 @@ int main(int argc, char* argv[]) {
         return main_square();
     } else if (std::strcmp(argv[1], "--honeycomb") == 0) {
         return main_honeycomb();
+    } else if (std::strcmp(argv[1], "--honeycomb2") == 0) {
+        // Parameterized standard honeycomb model
+        // Usage: --honeycomb2 Lx Ly LTau dt V nthreads nseed evaluationLength filepath
+        int Lx, Ly, LTau, nthreads, nseed, evaluationLength;
+        char* filepath;
+        double dt, V;
+        char filename[100];
+
+        Lx = std::stoi(argv[2]);
+        Ly = std::stoi(argv[3]);
+        LTau = std::stoi(argv[4]);
+        dt = std::stod(argv[5]);
+        V = std::stod(argv[6]);
+        nthreads = std::stoi(argv[7]);
+        nseed = std::stoi(argv[8]);
+        evaluationLength = std::stoi(argv[9]);
+        filepath = argv[10];
+
+        int numprocs, myid;
+        MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
+        MPI_Comm_rank(MPI_COMM_WORLD, &myid);
+
+        srand(nseed);
+        int nseeds[numprocs];
+        for (int i = 0; i < numprocs; i++) {
+            nseeds[i] = rand();
+        }
+
+        sprintf(filename, "%shoneycomb2-%d-%d-%d-%.2lf-%.2lf-%d-%d.out",
+            filepath, Lx, Ly, LTau, dt, V, myid, nseeds[myid]);
+        std::cout << "filename = " << filename << std::endl;
+        ok = main_honeycomb_param(Lx, Ly, LTau, dt, V, nthreads, nseeds[myid], evaluationLength, filename);
+
     } else if (std::strcmp(argv[1], "--MRhoneycomb") == 0) {
         int Lx, Ly, LTau, nthreads, nseed, evaluationLength;
         char* filepath;
@@ -415,6 +633,37 @@ int main(int argc, char* argv[]) {
         ok = main_honeycombSingleMajorana(Lx, Ly, LTau, dt, V, nthreads, nseeds[myid], evaluationLength, filename);
 
         // fstream fin()
+    } else if (std::strcmp(argv[1], "--MRhoneycomb4") == 0) {
+        int Lx, Ly, LTau, nthreads, nseed, evaluationLength;
+        char* filepath;
+        double dt, V;
+        char filename[100];
+
+        Lx = std::stoi(argv[2]);
+        Ly = std::stoi(argv[3]);
+        LTau = std::stoi(argv[4]);
+        dt = std::stod(argv[5]);
+        V = std::stod(argv[6]);
+        nthreads = std::stoi(argv[7]);
+        nseed = std::stoi(argv[8]);
+        evaluationLength = std::stoi(argv[9]);
+        filepath = argv[10];
+
+        int numprocs, myid;
+        MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
+        MPI_Comm_rank(MPI_COMM_WORLD, &myid);
+
+        srand(nseed);
+        int nseeds[numprocs];
+        for (int i = 0; i < numprocs; i++) {
+            nseeds[i] = rand();
+        }
+        
+        sprintf(filename, "%shoneycomb4-%d-%d-%d-%.2lf-%.2lf-%d-%d.out", 
+            filepath, Lx, Ly, LTau, dt, V, myid, nseeds[myid]);
+        std::cout << "filename = " << filename << std::endl;
+        ok = main_honeycomb_4replica(Lx, Ly, LTau, dt, V, nthreads, nseeds[myid], evaluationLength, filename);
+
     } else if (std::strcmp(argv[1], "--chain") == 0) {
         int Lx, LTau, nthreads, nseed, evaluationLength, hsScheme, boundary;
         double dt, V, delta, mu;

@@ -8,9 +8,15 @@ class PfQMC
 {
 public:
     int stb;
-    int nDim;
-    MatType g;
+    int nReplicas;        // NEW: number of replicas (default 1)
+    int nDimSingle;       // NEW: single-replica dimension
+    int nDim;             // CHANGED: = nReplicas * nDimSingle
+
+    MatType g;            // nDim × nDim Green's function
+
     std::vector<Operator *> op_array;
+    Operator* mixingOp;   // NEW: mixing operator at τ=0 (nullptr if nReplicas==1)
+
     int op_length;
     std::vector<bool> need_stabilization;
     int checkpoints;
@@ -19,13 +25,20 @@ public:
 
     DataType sign;
 
-    PfQMC(Spinless_tV *walker, int _stb = 10);
+    PfQMC(Spinless_tV *walker, int _stb = 10, int _nReplicas = 1, Operator* _mixingOp = nullptr);
 
     void rightInit()
     {
         MatType tmp = MatType::Identity(nDim, nDim);
         MatType Aseg = MatType::Identity(nDim, nDim);
         int curSeg = 0;
+        
+        // Apply mixing operator first if it exists
+        if (mixingOp != nullptr) {
+            mixingOp->left_multiply(Aseg, tmp);
+            std::swap(Aseg, tmp);
+        }
+
         for (int l = 0; l < op_length; l++)
         {
             op_array[l]->left_multiply(Aseg, tmp);
@@ -57,6 +70,13 @@ public:
         {
             op_array[l]->right_multiply(Aseg, tmp);
             std::swap(Aseg, tmp);
+            
+            // Apply mixing operator at l=0 (end of time evolution in this direction)
+            if (l == 0 && mixingOp != nullptr) {
+                mixingOp->right_multiply(Aseg, tmp);
+                std::swap(Aseg, tmp);
+            }
+
             if (need_stabilization[l])
             {
                 Aseg.adjointInPlace();
