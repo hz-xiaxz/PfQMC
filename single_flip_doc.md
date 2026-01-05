@@ -70,6 +70,9 @@ In the 4-replica scheme, replicas are coupled in pairs (0-1 and 2-3). The update
 When `assumeBlockDiagonal` is true, we assume the Green's function has a block-diagonal structure (2x2 blocks in replica space).
 
 -   **`updateBlockPair`**: This helper function performs the update for a pair of replicas efficiently by only updating the relevant 2N x 2N block of the Green's function.
+    > [!IMPORTANT]
+    > The 2N * 2N block update strategy needs to be reconsidered. The current assumption might not be fully optimal or correct for all cases.
+
 -   **`updateReplica`**: This helper function performs the standard dense update for a single replica.
 
 ### 6. Update State

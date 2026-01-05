@@ -484,11 +484,22 @@ class SpinlessVOperator : public Operator {
         }
     };
 
-    void singleFlipSingleMajorana(MatType &g, int replica, int idxAux, double rand,
-                                  bool &flag, DataType &signCur) {
+    DataType getRatioSingleMajorana(MatType &g, int replica, int idxAux) {
         int offset = replica * nDimSingle;
-        DataType r;
-        // auto m = mConfig->idxCell2Coord(idxCell);
+        int auxCur = (*s[replica])(idxAux);
+        int idx1, idx2;
+        DataType tmp;
+        
+        config->aux2MajoranaIdx(idxAux, 0, bondType, idx1, idx2);
+        int idx1_g = offset + idx1;
+        int idx2_g = offset + idx2;
+        
+        tmp = (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx1_g, idx2_g)));
+        return tmp * tmp * etaM;
+    }
+
+    void updateReplicaSingleMajorana(MatType &g, int replica, int idxAux) {
+        int offset = replica * nDimSingle;
         int auxCur = (*s[replica])(idxAux);
         int idx1, idx2;
         DataType tmp;
@@ -499,37 +510,105 @@ class SpinlessVOperator : public Operator {
         int idx1_g = offset + idx1;
         int idx2_g = offset + idx2;
         
-        tmp =
-            (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx1_g, idx2_g)));
-        r = tmp * tmp * etaM;
+        tmp = (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx1_g, idx2_g)));
 
-        flag = rand < std::abs(r);
-        // std::cout << rand << "=rand " << "r = " << r << "\n";
+        // update aux field and B matrix
+        (*s[replica])(idxAux) = -auxCur;
+        B_replica[replica](idx1, idx2) = -B_replica[replica](idx1, idx2);
+        B_replica[replica](idx2, idx1) = -B_replica[replica](idx2, idx1);
 
-        if (flag) {
-            // std::cout << "tmp = " << tmp << " r = " << r << "\n";
-            signCur *= (tmp / std::abs(tmp));
+        // update Green's function
+        cVecType x1 = -g.col(idx1_g);
+        cVecType x2 = -g.col(idx2_g);
+        x1(idx1_g) += 2;
+        x2(idx2_g) += 2;
+        alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp;
+        
+        zgeru(&nDim, &nDim, reinterpret_cast<MKL_Complex16*>(&alpha), 
+              reinterpret_cast<MKL_Complex16*>(x1.data()), &inc, 
+              reinterpret_cast<MKL_Complex16*>(x2.data()), &inc,
+              reinterpret_cast<MKL_Complex16*>(g.data()), &nDim);
+        alpha = -alpha;
+        zgeru(&nDim, &nDim, reinterpret_cast<MKL_Complex16*>(&alpha), 
+              reinterpret_cast<MKL_Complex16*>(x2.data()), &inc, 
+              reinterpret_cast<MKL_Complex16*>(x1.data()), &inc,
+              reinterpret_cast<MKL_Complex16*>(g.data()), &nDim);
+    }
+
+    void updateBlockPairSingleMajorana(MatType &g, int rA, int rB, int idxAux) {
+        int p = rA / 2;
+        int blkOffset = p * 2 * nDimSingle;
+        int blkSize = 2 * nDimSingle;
+        DataType* g_block_ptr = g.data() + blkOffset + blkOffset * nDim;
+        const int inc = 1;
+
+        for (int replica : {rA, rB}) {
+            int offset = replica * nDimSingle;
+            int auxCur = (*s[replica])(idxAux);
+            int idx1, idx2;
+            DataType tmp;
+            DataType alpha;
+
             config->aux2MajoranaIdx(idxAux, 0, bondType, idx1, idx2);
+            int idx1_g = offset + idx1;
+            int idx2_g = offset + idx2;
+            
+            tmp = (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx1_g, idx2_g)));
+
             // update aux field and B matrix
             (*s[replica])(idxAux) = -auxCur;
             B_replica[replica](idx1, idx2) = -B_replica[replica](idx1, idx2);
             B_replica[replica](idx2, idx1) = -B_replica[replica](idx2, idx1);
 
-            // update Green's function
-            cVecType x1 = -g.col(idx1_g);
-            cVecType x2 = -g.col(idx2_g);
-            x1(idx1_g) += 2;
-            x2(idx2_g) += 2;
+            // update Green's function (block optimized)
             alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp;
-            zgeru(&nDim, &nDim, reinterpret_cast<MKL_Complex16*>(&alpha), 
-                  reinterpret_cast<MKL_Complex16*>(x1.data()), &inc, 
-                  reinterpret_cast<MKL_Complex16*>(x2.data()), &inc,
-                  reinterpret_cast<MKL_Complex16*>(g.data()), &nDim);
+
+            cVecType x1_seg = -g.col(idx1_g).segment(blkOffset, blkSize);
+            cVecType x2_seg = -g.col(idx2_g).segment(blkOffset, blkSize);
+            
+            int idx1_local = idx1_g - blkOffset;
+            int idx2_local = idx2_g - blkOffset;
+            
+            x1_seg(idx1_local) += 2.0; 
+            x2_seg(idx2_local) += 2.0; 
+            
+            zgeru(&blkSize, &blkSize, reinterpret_cast<MKL_Complex16*>(&alpha), 
+                reinterpret_cast<MKL_Complex16*>(x1_seg.data()), &inc, 
+                reinterpret_cast<MKL_Complex16*>(x2_seg.data()), &inc,
+                reinterpret_cast<MKL_Complex16*>(g_block_ptr), &nDim);
+            
             alpha = -alpha;
-            zgeru(&nDim, &nDim, reinterpret_cast<MKL_Complex16*>(&alpha), 
-                  reinterpret_cast<MKL_Complex16*>(x2.data()), &inc, 
-                  reinterpret_cast<MKL_Complex16*>(x1.data()), &inc,
-                  reinterpret_cast<MKL_Complex16*>(g.data()), &nDim);
+            zgeru(&blkSize, &blkSize, reinterpret_cast<MKL_Complex16*>(&alpha), 
+                reinterpret_cast<MKL_Complex16*>(x2_seg.data()), &inc, 
+                reinterpret_cast<MKL_Complex16*>(x1_seg.data()), &inc,
+                reinterpret_cast<MKL_Complex16*>(g_block_ptr), &nDim);
+        }
+    }
+
+    void singleFlipSingleMajorana(MatType &g, int idxAux, bool &flag, DataType &signCur) {
+        for (int p = 0; p < nReplicas / 2; p++) {
+            int rA = 2 * p;
+            int rB = 2 * p + 1;
+            
+            double rand = rd->rdUniform01();
+            
+            DataType r_A = getRatioSingleMajorana(g, rA, idxAux);
+            DataType r_B = getRatioSingleMajorana(g, rB, idxAux);
+
+            DataType r_total = r_A * r_B;
+            bool accept = rand < std::abs(r_total);
+            
+            if (accept) {
+                flag = true;
+                signCur *= (r_total / std::abs(r_total));
+                
+                if (assumeBlockDiagonal) {
+                    updateBlockPairSingleMajorana(g, rA, rB, idxAux);
+                } else {
+                    updateReplicaSingleMajorana(g, rA, idxAux);
+                    updateReplicaSingleMajorana(g, rB, idxAux);
+                }
+            }
         }
     };
 
@@ -541,11 +620,7 @@ class SpinlessVOperator : public Operator {
         // Loop over all aux indices
         for (int i = 0; i < s[0]->size(); i++) {
             if (singleMaj) {
-                for (int r = 0; r < nReplicas; r++) {
-                    // random real between (0, 1)
-                    double rand = rd->rdUniform01();
-                    singleFlipSingleMajorana(g, r, i, rand, flag, signCur);
-                }
+                singleFlipSingleMajorana(g, i, flag, signCur);
             } else {
                 singleFlip(g, i, flag, signCur);
             }
