@@ -29,6 +29,45 @@ typedef Eigen::VectorXi iVecType;
 #define ind(i, j, N) (((j)*N) + i)
 const double thresholdDBL = 1.0e-300;
 
+// ============================================================
+// Replica Constants and Helpers for 4-Replica PFQMC
+// ============================================================
+
+// Number of replicas for replica trick calculations
+constexpr int N_REPLICAS = 4;
+
+// Number of replica pairs (replicas 0-1 and 2-3 are paired)
+constexpr int N_REPLICA_PAIRS = 2;
+
+// Convert replica-local index to global index in the enlarged Green's function
+// replica: replica index (0 to N_REPLICAS-1)
+// localIdx: index within single replica (0 to nDimSingle-1)
+// nDimSingle: dimension of single-replica Hilbert space
+// Returns: global index in the 4*nDimSingle dimensional space
+inline int replicaIdx(int replica, int localIdx, int nDimSingle) {
+    return replica * nDimSingle + localIdx;
+}
+
+// Get the pair index for a given replica (0 or 1)
+// Replicas 0,1 belong to pair 0; Replicas 2,3 belong to pair 1
+inline int replicaPairIdx(int replica) {
+    return replica / 2;
+}
+
+// Get the local index within a pair (0 or 1)
+// Replica 0,2 -> 0; Replica 1,3 -> 1
+inline int replicaLocalInPair(int replica) {
+    return replica % 2;
+}
+
+// Get the offset for a replica pair in the global matrix
+// Pair 0: offset 0; Pair 1: offset 2*nDimSingle
+inline int pairOffset(int pair, int nDimSingle) {
+    return pair * 2 * nDimSingle;
+}
+
+// ============================================================
+
 inline DataType logDet(const MatType &H) {
     DataType ld = 0.0;
     Eigen::PartialPivLU<MatType> lu(H);
