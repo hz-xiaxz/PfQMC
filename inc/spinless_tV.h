@@ -305,15 +305,9 @@ class SpinlessVOperator : public Operator {
                 x2(idx2_g) += 2;
                 DataType alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp_update;
                 
-                zgeru(&nDim, &nDim, reinterpret_cast<MKL_Complex16*>(&alpha), 
-                    reinterpret_cast<MKL_Complex16*>(x1.data()), &inc, 
-                    reinterpret_cast<MKL_Complex16*>(x2.data()), &inc, 
-                    reinterpret_cast<MKL_Complex16*>(g.data()), &nDim);
+                zgeru(&nDim, &nDim, &alpha, x1.data(), &inc, x2.data(), &inc, g.data(), &nDim);
                 alpha = -alpha;
-                zgeru(&nDim, &nDim, reinterpret_cast<MKL_Complex16*>(&alpha), 
-                    reinterpret_cast<MKL_Complex16*>(x2.data()), &inc, 
-                    reinterpret_cast<MKL_Complex16*>(x1.data()), &inc, 
-                    reinterpret_cast<MKL_Complex16*>(g.data()), &nDim);
+                zgeru(&nDim, &nDim, &alpha, x2.data(), &inc, x1.data(), &inc, g.data(), &nDim);
             }
         } else { // hsScheme == 1
             int idxj1, idxk1, idxj2, idxk2;
@@ -343,15 +337,9 @@ class SpinlessVOperator : public Operator {
                 DataType alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp_update;
                 if (iaux == 1) alpha = -alpha;
                 
-                zgeru(&nDim, &nDim, reinterpret_cast<MKL_Complex16*>(&alpha), 
-                    reinterpret_cast<MKL_Complex16*>(x1.data()), &inc, 
-                    reinterpret_cast<MKL_Complex16*>(x2.data()), &inc, 
-                    reinterpret_cast<MKL_Complex16*>(g.data()), &nDim);
+                zgeru(&nDim, &nDim, &alpha, x1.data(), &inc, x2.data(), &inc, g.data(), &nDim);
                 alpha = -alpha;
-                zgeru(&nDim, &nDim, reinterpret_cast<MKL_Complex16*>(&alpha), 
-                    reinterpret_cast<MKL_Complex16*>(x2.data()), &inc, 
-                    reinterpret_cast<MKL_Complex16*>(x1.data()), &inc, 
-                    reinterpret_cast<MKL_Complex16*>(g.data()), &nDim);
+                zgeru(&nDim, &nDim, &alpha, x2.data(), &inc, x1.data(), &inc, g.data(), &nDim);
             }
         }
     }
@@ -392,19 +380,13 @@ class SpinlessVOperator : public Operator {
                     int idx1_local = idx1_g - blkOffset;
                     int idx2_local = idx2_g - blkOffset;
                     
-                    x1_seg(idx1_local) += 2.0; 
-                    x2_seg(idx2_local) += 2.0; 
-                    
-                    zgeru(&blkSize, &blkSize, reinterpret_cast<MKL_Complex16*>(&alpha), 
-                        reinterpret_cast<MKL_Complex16*>(x1_seg.data()), &inc, 
-                        reinterpret_cast<MKL_Complex16*>(x2_seg.data()), &inc,
-                        reinterpret_cast<MKL_Complex16*>(g_block_ptr), &nDim);
-                    
+                    x1_seg(idx1_local) += 2.0;
+                    x2_seg(idx2_local) += 2.0;
+
+                    zgeru(&blkSize, &blkSize, &alpha, x1_seg.data(), &inc, x2_seg.data(), &inc, g_block_ptr, &nDim);
+
                     alpha = -alpha;
-                    zgeru(&blkSize, &blkSize, reinterpret_cast<MKL_Complex16*>(&alpha), 
-                        reinterpret_cast<MKL_Complex16*>(x2_seg.data()), &inc, 
-                        reinterpret_cast<MKL_Complex16*>(x1_seg.data()), &inc,
-                        reinterpret_cast<MKL_Complex16*>(g_block_ptr), &nDim);
+                    zgeru(&blkSize, &blkSize, &alpha, x2_seg.data(), &inc, x1_seg.data(), &inc, g_block_ptr, &nDim);
                 }
             } else { // hsScheme == 1
                 int idxj1, idxk1, idxj2, idxk2;
@@ -436,19 +418,13 @@ class SpinlessVOperator : public Operator {
                     int idx1_local = idx1_g - blkOffset;
                     int idx2_local = idx2_g - blkOffset;
                     
-                    x1_seg(idx1_local) += 2.0; 
-                    x2_seg(idx2_local) += 2.0; 
-                    
-                    zgeru(&blkSize, &blkSize, reinterpret_cast<MKL_Complex16*>(&alpha), 
-                        reinterpret_cast<MKL_Complex16*>(x1_seg.data()), &inc, 
-                        reinterpret_cast<MKL_Complex16*>(x2_seg.data()), &inc,
-                        reinterpret_cast<MKL_Complex16*>(g_block_ptr), &nDim);
-                    
+                    x1_seg(idx1_local) += 2.0;
+                    x2_seg(idx2_local) += 2.0;
+
+                    zgeru(&blkSize, &blkSize, &alpha, x1_seg.data(), &inc, x2_seg.data(), &inc, g_block_ptr, &nDim);
+
                     alpha = -alpha;
-                    zgeru(&blkSize, &blkSize, reinterpret_cast<MKL_Complex16*>(&alpha), 
-                        reinterpret_cast<MKL_Complex16*>(x2_seg.data()), &inc, 
-                        reinterpret_cast<MKL_Complex16*>(x1_seg.data()), &inc,
-                        reinterpret_cast<MKL_Complex16*>(g_block_ptr), &nDim);
+                    zgeru(&blkSize, &blkSize, &alpha, x2_seg.data(), &inc, x1_seg.data(), &inc, g_block_ptr, &nDim);
                 }
             }
         }
@@ -523,16 +499,10 @@ class SpinlessVOperator : public Operator {
         x1(idx1_g) += 2;
         x2(idx2_g) += 2;
         alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp;
-        
-        zgeru(&nDim, &nDim, reinterpret_cast<MKL_Complex16*>(&alpha), 
-              reinterpret_cast<MKL_Complex16*>(x1.data()), &inc, 
-              reinterpret_cast<MKL_Complex16*>(x2.data()), &inc,
-              reinterpret_cast<MKL_Complex16*>(g.data()), &nDim);
+
+        zgeru(&nDim, &nDim, &alpha, x1.data(), &inc, x2.data(), &inc, g.data(), &nDim);
         alpha = -alpha;
-        zgeru(&nDim, &nDim, reinterpret_cast<MKL_Complex16*>(&alpha), 
-              reinterpret_cast<MKL_Complex16*>(x2.data()), &inc, 
-              reinterpret_cast<MKL_Complex16*>(x1.data()), &inc,
-              reinterpret_cast<MKL_Complex16*>(g.data()), &nDim);
+        zgeru(&nDim, &nDim, &alpha, x2.data(), &inc, x1.data(), &inc, g.data(), &nDim);
     }
 
     void updateBlockPairSingleMajorana(MatType &g, int rA, int rB, int idxAux) {
@@ -569,19 +539,13 @@ class SpinlessVOperator : public Operator {
             int idx1_local = idx1_g - blkOffset;
             int idx2_local = idx2_g - blkOffset;
             
-            x1_seg(idx1_local) += 2.0; 
-            x2_seg(idx2_local) += 2.0; 
-            
-            zgeru(&blkSize, &blkSize, reinterpret_cast<MKL_Complex16*>(&alpha), 
-                reinterpret_cast<MKL_Complex16*>(x1_seg.data()), &inc, 
-                reinterpret_cast<MKL_Complex16*>(x2_seg.data()), &inc,
-                reinterpret_cast<MKL_Complex16*>(g_block_ptr), &nDim);
-            
+            x1_seg(idx1_local) += 2.0;
+            x2_seg(idx2_local) += 2.0;
+
+            zgeru(&blkSize, &blkSize, &alpha, x1_seg.data(), &inc, x2_seg.data(), &inc, g_block_ptr, &nDim);
+
             alpha = -alpha;
-            zgeru(&blkSize, &blkSize, reinterpret_cast<MKL_Complex16*>(&alpha), 
-                reinterpret_cast<MKL_Complex16*>(x2_seg.data()), &inc, 
-                reinterpret_cast<MKL_Complex16*>(x1_seg.data()), &inc,
-                reinterpret_cast<MKL_Complex16*>(g_block_ptr), &nDim);
+            zgeru(&blkSize, &blkSize, &alpha, x2_seg.data(), &inc, x1_seg.data(), &inc, g_block_ptr, &nDim);
         }
     }
 
