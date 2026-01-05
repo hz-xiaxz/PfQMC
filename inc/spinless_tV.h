@@ -248,187 +248,237 @@ class SpinlessVOperator : public Operator {
     // virtual inline void aux2MajoranaIdx(int idxAux, int imaj, int& idx1, int&
     // idx2) {};
 
-    void singleFlip(MatType &g, int replica, int idxAux, double rand, bool &flag,
-                    DataType &signCur) {
-        // Compute offset for this replica in the global matrix
+    DataType getRatio(MatType &g, int replica, int idxAux) {
         int offset = replica * nDimSingle;
-        
-        DataType r;
-        // auto m = mConfig->idxCell2Coord(idxCell);
         int auxCur = (*s[replica])(idxAux);
         int idx1, idx2, idx3, idx4;
         DataType tmp[2];
-        const int inc = 1;
-        DataType alpha;
+        DataType r;
 
-        config->aux2MajoranaIdx(idxAux, 0, bondType, idx1, idx2); // 1j, 1k
-        config->aux2MajoranaIdx(idxAux, 1, bondType, idx3, idx4); // 2j, 2k
-        
-        // Convert to global indices
+        config->aux2MajoranaIdx(idxAux, 0, bondType, idx1, idx2);
+        config->aux2MajoranaIdx(idxAux, 1, bondType, idx3, idx4);
+
         int idx1_g = offset + idx1;
         int idx2_g = offset + idx2;
         int idx3_g = offset + idx3;
         int idx4_g = offset + idx4;
 
         if (hsScheme == 0) {
-            tmp[0] =
-                (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx1_g, idx2_g)));
-            tmp[1] =
-                (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx3_g, idx4_g)));
+            tmp[0] = (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx1_g, idx2_g)));
+            tmp[1] = (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx3_g, idx4_g)));
             r = tmp[0] * tmp[1];
-            // std::cout << "r1" << r << " ";
             r += (config->thlV * config->thlV) * ((g(idx1_g, idx3_g) * g(idx2_g, idx4_g)) -
                                                 (g(idx2_g, idx3_g) * g(idx1_g, idx4_g)));
-            // std::cout << " r2" << r << "\n";
             r *= etaM;
-        } else if (hsScheme == 1) {
-            tmp[0] =
-                (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx1_g, idx3_g)));
-            tmp[1] =
-                (1.0 + ((1.0i) * (config->thlV) * double(auxCur) * g(idx2_g, idx4_g)));
+        } else { // hsScheme == 1
+            tmp[0] = (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx1_g, idx3_g)));
+            tmp[1] = (1.0 + ((1.0i) * (config->thlV) * double(auxCur) * g(idx2_g, idx4_g)));
             r = tmp[0] * tmp[1];
-            // std::cout << "r1" << r << " ";
             r -= (config->thlV * config->thlV) * ((g(idx1_g, idx2_g) * g(idx3_g, idx4_g)) -
                                                 (g(idx3_g, idx2_g) * g(idx1_g, idx4_g)));
-            // std::cout << " r2" << r << "\n";
             r *= etaM;
         }
-        // for (int imaj = 0; imaj < 2; imaj ++) {
-        //     config->aux2MajoranaIdx(idxAux, imaj, bondType, idx1, idx2);
-        //     // idx1 = mConfig->majoranaCoord2Idx(m.ix, m.iy, 0, imaj);
-        //     // idx2 = mConfig->neighborSiteIdx(m.ix, m.iy, imaj, bondType);
-        //     // tmp = [1 + i \sigma_{12} \tanh(\lambda / 2) G_{12}]
-        //     tmp[imaj] = ( 1.0 - ( (1.0i) * (config->thlV) * double(auxCur) *
-        //     g(idx1, idx2) ) ); r *= tmp[imaj];
-        // }
+        return r;
+    }
 
-        flag = rand < std::abs(r);
-        // std::cout << rand << "=rand " << "r = " << r << "\n";
+    void updateReplica(MatType &g, int replica, int idxAux) {
+        int offset = replica * nDimSingle;
+        int auxCur = (*s[replica])(idxAux);
+        const int inc = 1;
+        
+        if (hsScheme == 0) {
+            for (int imaj = 0; imaj < 2; imaj++) {
+                int idx1, idx2;
+                config->aux2MajoranaIdx(idxAux, imaj, bondType, idx1, idx2);
+                int idx1_g = offset + idx1;
+                int idx2_g = offset + idx2;
+                
+                DataType tmp_update = (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx1_g, idx2_g)));
 
-        if (flag) {
-            // DataType t = (r / std::abs(r));
-            // if (std::abs(t.imag()) > 1e-5) {
-            //     std::cout << "r= " << r << " sign(r)= " << t << "\n";
-            // }
-            signCur *= (r / std::abs(r));
+                (*s[replica])(idxAux) = -auxCur;
+                B_replica[replica](idx1, idx2) = -B_replica[replica](idx1, idx2);
+                B_replica[replica](idx2, idx1) = -B_replica[replica](idx2, idx1);
+
+                cVecType x1 = -g.col(idx1_g);
+                cVecType x2 = -g.col(idx2_g);
+                x1(idx1_g) += 2;
+                x2(idx2_g) += 2;
+                DataType alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp_update;
+                
+                zgeru(&nDim, &nDim, reinterpret_cast<MKL_Complex16*>(&alpha), 
+                    reinterpret_cast<MKL_Complex16*>(x1.data()), &inc, 
+                    reinterpret_cast<MKL_Complex16*>(x2.data()), &inc, 
+                    reinterpret_cast<MKL_Complex16*>(g.data()), &nDim);
+                alpha = -alpha;
+                zgeru(&nDim, &nDim, reinterpret_cast<MKL_Complex16*>(&alpha), 
+                    reinterpret_cast<MKL_Complex16*>(x2.data()), &inc, 
+                    reinterpret_cast<MKL_Complex16*>(x1.data()), &inc, 
+                    reinterpret_cast<MKL_Complex16*>(g.data()), &nDim);
+            }
+        } else { // hsScheme == 1
+            int idxj1, idxk1, idxj2, idxk2;
+            config->aux2MajoranaIdx(idxAux, 0, bondType, idxj1, idxk1);
+            config->aux2MajoranaIdx(idxAux, 1, bondType, idxj2, idxk2);
+            for (int iaux = 0; iaux < 2; iaux++) {
+                int idx1, idx2;
+                DataType tmp_update;
+                 if (iaux == 0) {
+                    idx1 = idxj1; idx2 = idxj2;
+                    tmp_update = (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(offset + idx1, offset + idx2)));
+                } else {
+                    idx1 = idxk1; idx2 = idxk2;
+                    tmp_update = (1.0 + ((1.0i) * (config->thlV) * double(auxCur) * g(offset + idx1, offset + idx2)));
+                }
+                int idx1_g = offset + idx1;
+                int idx2_g = offset + idx2;
+
+                (*s[replica])(idxAux) = -auxCur;
+                B_replica[replica](idx1, idx2) = -B_replica[replica](idx1, idx2);
+                B_replica[replica](idx2, idx1) = -B_replica[replica](idx2, idx1);
+
+                cVecType x1 = -g.col(idx1_g);
+                cVecType x2 = -g.col(idx2_g);
+                x1(idx1_g) += 2;
+                x2(idx2_g) += 2;
+                DataType alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp_update;
+                if (iaux == 1) alpha = -alpha;
+                
+                zgeru(&nDim, &nDim, reinterpret_cast<MKL_Complex16*>(&alpha), 
+                    reinterpret_cast<MKL_Complex16*>(x1.data()), &inc, 
+                    reinterpret_cast<MKL_Complex16*>(x2.data()), &inc, 
+                    reinterpret_cast<MKL_Complex16*>(g.data()), &nDim);
+                alpha = -alpha;
+                zgeru(&nDim, &nDim, reinterpret_cast<MKL_Complex16*>(&alpha), 
+                    reinterpret_cast<MKL_Complex16*>(x2.data()), &inc, 
+                    reinterpret_cast<MKL_Complex16*>(x1.data()), &inc, 
+                    reinterpret_cast<MKL_Complex16*>(g.data()), &nDim);
+            }
+        }
+    }
+
+    void updateBlockPair(MatType &g, int rA, int rB, int idxAux) {
+        // Optimized update for block diagonal case (pair block)
+        // We assume rA and rB form a pair (0,1) or (2,3) etc.
+        // The block offset is determined by the pair index.
+        int p = rA / 2; // Assuming rA is even and rB is rA+1
+        int blkOffset = p * 2 * nDimSingle;
+        int blkSize = 2 * nDimSingle;
+        DataType* g_block_ptr = g.data() + blkOffset + blkOffset * nDim;
+        const int inc = 1;
+
+        for (int replica : {rA, rB}) {
+            int offset = replica * nDimSingle;
+            int auxCur = (*s[replica])(idxAux);
 
             if (hsScheme == 0) {
                 for (int imaj = 0; imaj < 2; imaj++) {
+                    int idx1, idx2;
                     config->aux2MajoranaIdx(idxAux, imaj, bondType, idx1, idx2);
                     int idx1_g = offset + idx1;
                     int idx2_g = offset + idx2;
                     
-                    if (imaj == 1) {
-                        tmp[1] = (1.0 - ((1.0i) * (config->thlV) * double(auxCur) *
-                                        g(idx1_g, idx2_g)));
-                    }
-                    // update aux field and B matrix
+                    DataType tmp_update = (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx1_g, idx2_g)));
+
                     (*s[replica])(idxAux) = -auxCur;
                     B_replica[replica](idx1, idx2) = -B_replica[replica](idx1, idx2);
                     B_replica[replica](idx2, idx1) = -B_replica[replica](idx2, idx1);
 
-                    // update Green's function
-                    if (assumeBlockDiagonal) {
-                        // Optimized update for block diagonal case
-                        // Only update the block corresponding to this replica
-                        // Indices are already local to the block if we subtract offset?
-                        // No, idx1_g is global. We need to map it to local or use block operations.
-                        // Actually, since g is stored as one large matrix, we just need to limit the 
-                        // rank-1 update to the columns/rows of this replica.
-                        
-                        // x1 and x2 are columns. We only need the segment [offset, offset+nDimSingle]
-                        // But g.col() returns the whole column.
-                        // We can manually implement the update loop over the relevant range.
-                        
-                        int startIdx = offset;
-                        int endIdx = offset + nDimSingle;
-                        int localDim = nDimSingle;
-                        
-                        // We need x1 and x2 segments.
-                        // x1 = -g.col(idx1_g) + 2*e_{idx1_g}
-                        // x2 = -g.col(idx2_g) + 2*e_{idx2_g}
-                        
-                        // Optimized update for block diagonal case
-                        // Only update the block corresponding to this replica
-                        
-                        // We need x1 and x2 segments.
-                        // x1 = -g.col(idx1_g) + 2*e_{idx1_g}
-                        // x2 = -g.col(idx2_g) + 2*e_{idx2_g}
-                        
-                        // Extract relevant segments of columns to local vectors
-                        cVecType x1_seg = -g.col(idx1_g).segment(offset, nDimSingle);
-                        cVecType x2_seg = -g.col(idx2_g).segment(offset, nDimSingle);
-                        
-                        x1_seg(idx1) += 2.0; // idx1 is local index
-                        x2_seg(idx2) += 2.0; // idx2 is local index
-                        
-                        alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp[imaj];
-                        
-                        // Rank-1 update on the block: G_block += alpha * x1 * x2^T
-                        // We use zgeru. The block starts at (offset, offset).
-                        // The leading dimension (stride between columns) is nDim (total dimension).
-                        DataType* g_block_ptr = g.data() + offset + offset * nDim;
-                        
-                        zgeru(&nDimSingle, &nDimSingle, reinterpret_cast<MKL_Complex16*>(&alpha), 
-                              reinterpret_cast<MKL_Complex16*>(x1_seg.data()), &inc, 
-                              reinterpret_cast<MKL_Complex16*>(x2_seg.data()), &inc,
-                              reinterpret_cast<MKL_Complex16*>(g_block_ptr), &nDim);
-                        
-                        alpha = -alpha;
-                        // Rank-1 update: G_block += -alpha * x2 * x1^T
-                        zgeru(&nDimSingle, &nDimSingle, reinterpret_cast<MKL_Complex16*>(&alpha), 
-                              reinterpret_cast<MKL_Complex16*>(x2_seg.data()), &inc, 
-                              reinterpret_cast<MKL_Complex16*>(x1_seg.data()), &inc,
-                              reinterpret_cast<MKL_Complex16*>(g_block_ptr), &nDim);
-                            
-                    } else {
-                        // Full dense update (original)
-                        cVecType x1 = -g.col(idx1_g);
-                        cVecType x2 = -g.col(idx2_g);
-                        x1(idx1_g) += 2;
-                        x2(idx2_g) += 2;
-                        alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp[imaj];
-                        zgeru(&nDim, &nDim, &alpha, x1.data(), &inc, x2.data(), &inc,
-                            g.data(), &nDim);
-                        alpha = -alpha;
-                        zgeru(&nDim, &nDim, &alpha, x2.data(), &inc, x1.data(), &inc,
-                            g.data(), &nDim);
-                    }
+                    DataType alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp_update;
+
+                    // Extract relevant segments of columns to local vectors
+                    cVecType x1_seg = -g.col(idx1_g).segment(blkOffset, blkSize);
+                    cVecType x2_seg = -g.col(idx2_g).segment(blkOffset, blkSize);
+                    
+                    int idx1_local = idx1_g - blkOffset;
+                    int idx2_local = idx2_g - blkOffset;
+                    
+                    x1_seg(idx1_local) += 2.0; 
+                    x2_seg(idx2_local) += 2.0; 
+                    
+                    zgeru(&blkSize, &blkSize, reinterpret_cast<MKL_Complex16*>(&alpha), 
+                        reinterpret_cast<MKL_Complex16*>(x1_seg.data()), &inc, 
+                        reinterpret_cast<MKL_Complex16*>(x2_seg.data()), &inc,
+                        reinterpret_cast<MKL_Complex16*>(g_block_ptr), &nDim);
+                    
+                    alpha = -alpha;
+                    zgeru(&blkSize, &blkSize, reinterpret_cast<MKL_Complex16*>(&alpha), 
+                        reinterpret_cast<MKL_Complex16*>(x2_seg.data()), &inc, 
+                        reinterpret_cast<MKL_Complex16*>(x1_seg.data()), &inc,
+                        reinterpret_cast<MKL_Complex16*>(g_block_ptr), &nDim);
                 }
-            } else if (hsScheme == 1) {
+            } else { // hsScheme == 1
                 int idxj1, idxk1, idxj2, idxk2;
                 config->aux2MajoranaIdx(idxAux, 0, bondType, idxj1, idxk1);
                 config->aux2MajoranaIdx(idxAux, 1, bondType, idxj2, idxk2);
                 for (int iaux = 0; iaux < 2; iaux++) {
+                    int idx1, idx2;
+                    DataType tmp_update;
                     if (iaux == 0) {
-                        idx1 = idxj1;
-                        idx2 = idxj2;
+                        idx1 = idxj1; idx2 = idxj2;
+                        tmp_update = (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(offset + idx1, offset + idx2)));
                     } else {
-                        idx1 = idxk1;
-                        idx2 = idxk2;
-                        tmp[1] = (1.0 + ((1.0i) * (config->thlV) * double(auxCur) *
-                                        g(idx1_g, idx2_g)));
+                        idx1 = idxk1; idx2 = idxk2;
+                        tmp_update = (1.0 + ((1.0i) * (config->thlV) * double(auxCur) * g(offset + idx1, offset + idx2)));
                     }
                     int idx1_g = offset + idx1;
                     int idx2_g = offset + idx2;
 
-                    // update aux field and B matrix
                     (*s[replica])(idxAux) = -auxCur;
                     B_replica[replica](idx1, idx2) = -B_replica[replica](idx1, idx2);
                     B_replica[replica](idx2, idx1) = -B_replica[replica](idx2, idx1);
 
-                    // update Green's function
-                    cVecType x1 = -g.col(idx1_g);
-                    cVecType x2 = -g.col(idx2_g);
-                    x1(idx1_g) += 2;
-                    x2(idx2_g) += 2;
-                    alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp[iaux];
+                    DataType alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp_update;
                     if (iaux == 1) alpha = -alpha;
-                    zgeru(&nDim, &nDim, &alpha, x1.data(), &inc, x2.data(), &inc,
-                        g.data(), &nDim);
+
+                    cVecType x1_seg = -g.col(idx1_g).segment(blkOffset, blkSize);
+                    cVecType x2_seg = -g.col(idx2_g).segment(blkOffset, blkSize);
+                    
+                    int idx1_local = idx1_g - blkOffset;
+                    int idx2_local = idx2_g - blkOffset;
+                    
+                    x1_seg(idx1_local) += 2.0; 
+                    x2_seg(idx2_local) += 2.0; 
+                    
+                    zgeru(&blkSize, &blkSize, reinterpret_cast<MKL_Complex16*>(&alpha), 
+                        reinterpret_cast<MKL_Complex16*>(x1_seg.data()), &inc, 
+                        reinterpret_cast<MKL_Complex16*>(x2_seg.data()), &inc,
+                        reinterpret_cast<MKL_Complex16*>(g_block_ptr), &nDim);
+                    
                     alpha = -alpha;
-                    zgeru(&nDim, &nDim, &alpha, x2.data(), &inc, x1.data(), &inc,
-                        g.data(), &nDim);
+                    zgeru(&blkSize, &blkSize, reinterpret_cast<MKL_Complex16*>(&alpha), 
+                        reinterpret_cast<MKL_Complex16*>(x2_seg.data()), &inc, 
+                        reinterpret_cast<MKL_Complex16*>(x1_seg.data()), &inc,
+                        reinterpret_cast<MKL_Complex16*>(g_block_ptr), &nDim);
+                }
+            }
+        }
+    }
+
+    void singleFlip(MatType &g, int idxAux, bool &flag, DataType &signCur) {
+        // Loop over replica pairs
+        for (int p = 0; p < nReplicas / 2; p++) {
+            int rA = 2 * p;
+            int rB = 2 * p + 1;
+            
+            // Generate ONE random number for the pair
+            double rand = rd->rdUniform01();
+            
+            DataType r_A = getRatio(g, rA, idxAux);
+            DataType r_B = getRatio(g, rB, idxAux);
+
+            // --- Combined Acceptance ---
+            DataType r_total = r_A * r_B;
+            bool accept = rand < std::abs(r_total);
+            
+            if (accept) {
+                flag = true;
+                signCur *= (r_total / std::abs(r_total));
+                
+                if (assumeBlockDiagonal) {
+                    updateBlockPair(g, rA, rB, idxAux);
+                } else {
+                    updateReplica(g, rA, idxAux);
+                    updateReplica(g, rB, idxAux);
                 }
             }
         }
@@ -471,33 +521,33 @@ class SpinlessVOperator : public Operator {
             x1(idx1_g) += 2;
             x2(idx2_g) += 2;
             alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp;
-            zgeru(&nDim, &nDim, &alpha, x1.data(), &inc, x2.data(), &inc,
-                  g.data(), &nDim);
+            zgeru(&nDim, &nDim, reinterpret_cast<MKL_Complex16*>(&alpha), 
+                  reinterpret_cast<MKL_Complex16*>(x1.data()), &inc, 
+                  reinterpret_cast<MKL_Complex16*>(x2.data()), &inc,
+                  reinterpret_cast<MKL_Complex16*>(g.data()), &nDim);
             alpha = -alpha;
-            zgeru(&nDim, &nDim, &alpha, x2.data(), &inc, x1.data(), &inc,
-                  g.data(), &nDim);
+            zgeru(&nDim, &nDim, reinterpret_cast<MKL_Complex16*>(&alpha), 
+                  reinterpret_cast<MKL_Complex16*>(x2.data()), &inc, 
+                  reinterpret_cast<MKL_Complex16*>(x1.data()), &inc,
+                  reinterpret_cast<MKL_Complex16*>(g.data()), &nDim);
         }
     };
 
     DataType update(MatType &g) override {
-        double rand;
-        bool flag;
+        bool flag = false;
         DataType signCur = 1.0;
         
         // Loop over all replicas
-        for (int r = 0; r < nReplicas; r++) {
+        // Loop over all aux indices
+        for (int i = 0; i < s[0]->size(); i++) {
             if (singleMaj) {
-                for (int i = 0; i < s[r]->size(); i++) {
+                for (int r = 0; r < nReplicas; r++) {
                     // random real between (0, 1)
-                    rand = rd->rdUniform01();
+                    double rand = rd->rdUniform01();
                     singleFlipSingleMajorana(g, r, i, rand, flag, signCur);
                 }
             } else {
-                for (int i = 0; i < s[r]->size(); i++) {
-                    // random real between (0, 1)
-                    rand = rd->rdUniform01();
-                    singleFlip(g, r, i, rand, flag, signCur);
-                }
+                singleFlip(g, i, flag, signCur);
             }
         }
         return signCur;
