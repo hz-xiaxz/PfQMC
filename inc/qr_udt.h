@@ -2,6 +2,7 @@
 #define QR_UDT_H
 
 #include "types.h"
+#include <vector>
 
 class UDT
 {
@@ -10,6 +11,11 @@ public:
     MatType U;
     dVecType D;
     MatType T;
+
+    // Block support
+    bool isBlock = false;
+    std::vector<UDT> blocks;
+
     UDT() = default;
     UDT(int nDim)
     {
@@ -33,6 +39,8 @@ public:
         U = other.U;
         D = other.D;
         T = other.T;
+        isBlock = other.isBlock;
+        blocks = other.blocks;
         return *this;
     }
 
@@ -49,6 +57,8 @@ public:
             U = std::move(other.U);
             D = std::move(other.D);
             T = std::move(other.T);
+            isBlock = other.isBlock;
+            blocks = std::move(other.blocks);
         }
         return (*this);
     }
@@ -59,9 +69,24 @@ public:
     }
 
     // use qr to get UDT decomposition
-    explicit UDT(MatType &A)
+    // nBlocks > 1 triggers block decomposition
+    explicit UDT(MatType &A, int nBlocks = 1)
     {
         nDim = A.rows();
+        
+        if (nBlocks > 1 && nDim % nBlocks == 0) {
+            isBlock = true;
+            int blkSize = nDim / nBlocks;
+            blocks.resize(nBlocks);
+            
+            // Decompose each block
+            for (int i = 0; i < nBlocks; i++) {
+                MatType blk = A.block(i * blkSize, i * blkSize, blkSize, blkSize);
+                blocks[i] = UDT(blk, 1); 
+            }
+            return;
+        }
+
         T = MatType::Zero(nDim, nDim);
         D = dVecType(nDim);
         int jpvt[nDim];
@@ -98,85 +123,20 @@ public:
         U = A;
     }
 
-    // // F = (*this) * F
-    // inline void factorizedMultUpdate(UDT &F)
-    // {
-    //     MatType mat = T * F.U;
-    //     mat = D.asDiagonal() * mat;
-    //     mat = mat * F.D.asDiagonal();
-    //     UDT tmp(mat);
-    //     F.U = U * tmp.U;
-    //     F.T = tmp.T * F.T;
-    //     F.D = tmp.D;
-    // }
-
-    // // (*this) = B * (*this)
-    // inline void bMultUpdate(const MatType &B)
-    // {
-    //     // MatType r = ((B * U) * D.asDiagonal()) * T;
-    //     MatType tmp = B * U;
-    //     MatType tmp2 = tmp * D.asDiagonal();
-    //     UDT F(tmp2);
-    //     U = F.U;
-    //     D = F.D;
-    //     // std::cout << " r - UDTT " << (r - U * D.asDiagonal() * F.T * T).squaredNorm() << "\n";
-    //     tmp = (F.T) * T;
-    //     T = tmp;
-    // }
-
-    // // g = 2 * (1 + UDT)^{-1}
-    // inline void onePlusInv(MatType &g) const
-    // {
-    //     MatType Xinv = T;
-    //     MatType tmp1, tmp2;
-    //     // std::cout << Tn << "\n === \n";
-    //     int ipiv[nDim];
-    //     LAPACKE_zgetrf(LAPACK_COL_MAJOR, nDim, nDim, Xinv.data(), nDim, ipiv);
-    //     // std::cout << "ipiv= " << ipiv << "\n";
-    //     // std::cout << Tn << "\n";
-    //     LAPACKE_zgetri(LAPACK_COL_MAJOR, nDim, Xinv.data(), nDim, ipiv);
-
-    //     // std::cout << "Xinv * X - I = " << (Xinv*T - MatType::Identity(nDim, nDim)).squaredNorm() << "\n";
-
-    //     dVecType Dpinv(nDim);
-    //     dVecType Dm(nDim);
-    //     for (int i = 0; i < nDim; i++)
-    //     {
-    //         Dpinv(i) = 1.0 / std::max(D(i), 1.0);
-    //         Dm(i) = std::min(D(i), 1.0);
-    //     }
-
-    //     tmp1 = Xinv * Dpinv.asDiagonal();
-    //     tmp2 = U * Dm.asDiagonal();
-    //     tmp1 = tmp1 + tmp2;
-
-    //     UDT f = UDT(tmp1);
-    //     LAPACKE_zgetrf(LAPACK_COL_MAJOR, nDim, nDim, f.T.data(), nDim, ipiv);
-    //     LAPACKE_zgetri(LAPACK_COL_MAJOR, nDim, f.T.data(), nDim, ipiv);
-
-    //     // std::cout << "Uinv * U - I = " << ((f.U)*(f.U.adjoint()) - MatType::Identity(nDim, nDim)).squaredNorm() << "\n";
-
-    //     // MatType identity = MatType::Identity(nDim, nDim);
-    //     // g = Xinv * Dpinv.asDiagonal() * f.T * (f.U * f.D.asDiagonal()).inverse();
-    //     // return;
-
-    //     tmp1 = (f.T) * (f.D.cwiseInverse()).asDiagonal();
-    //     tmp2 = tmp1 * f.U.adjoint();
-    //     tmp1 = Dpinv.asDiagonal() * tmp2;
-
-    //     f = UDT(tmp1);
-
-    //     f.D *= 2.0;
-
-    //     tmp2 = Xinv * f.U;
-    //     tmp1 = tmp2 * f.D.asDiagonal();
-    //     g = tmp1 * f.T;
-    // }
-
-
     // g = 2 * (1 + UDT)^{-1}
     inline void onePlusInv(MatType &g) const
     {
+        if (isBlock) {
+            g = MatType::Zero(nDim, nDim);
+            int blkSize = nDim / blocks.size();
+            for (size_t i = 0; i < blocks.size(); i++) {
+                MatType gBlk;
+                blocks[i].onePlusInv(gBlk);
+                g.block(i * blkSize, i * blkSize, blkSize, blkSize) = gBlk;
+            }
+            return;
+        }
+
         MatType Xinv = T.inverse();
         dVecType Dpinv(nDim);
         dVecType Dm(nDim);
@@ -193,6 +153,17 @@ public:
 
 inline UDT operator*(const UDT &udtL, const UDT &udtR)
 {
+    if (udtL.isBlock && udtR.isBlock) {
+        UDT res;
+        res.nDim = udtL.nDim;
+        res.isBlock = true;
+        res.blocks.resize(udtL.blocks.size());
+        for (size_t i = 0; i < udtL.blocks.size(); i++) {
+            res.blocks[i] = udtL.blocks[i] * udtR.blocks[i];
+        }
+        return res;
+    }
+
     MatType mat = udtL.T * udtR.U;
     mat = udtL.D.asDiagonal() * mat;
     mat = mat * udtR.D.asDiagonal();
@@ -205,6 +176,20 @@ inline UDT operator*(const UDT &udtL, const UDT &udtR)
 // TO DO: lazy evaluation, check udta = B * udta
 inline UDT operator*(const MatType &B, const UDT &udtR)
 {
+    if (udtR.isBlock) {
+        UDT res;
+        res.nDim = udtR.nDim;
+        res.isBlock = true;
+        res.blocks.resize(udtR.blocks.size());
+        int blkSize = udtR.nDim / udtR.blocks.size();
+        
+        for (size_t i = 0; i < udtR.blocks.size(); i++) {
+            MatType Bblk = B.block(i * blkSize, i * blkSize, blkSize, blkSize);
+            res.blocks[i] = Bblk * udtR.blocks[i];
+        }
+        return res;
+    }
+
     MatType mat = B * udtR.U;
     mat = mat * udtR.D.asDiagonal();
     UDT tmp(mat);
@@ -215,6 +200,17 @@ inline UDT operator*(const MatType &B, const UDT &udtR)
 // return (1+udtR@(udtL).adjoint)^{-1}
 inline MatType onePlusInv(UDT &udtL, UDT &udtR)
 {
+    if (udtL.isBlock && udtR.isBlock) {
+        int nDim = udtL.nDim;
+        MatType res = MatType::Zero(nDim, nDim);
+        int blkSize = nDim / udtL.blocks.size();
+        for (size_t i = 0; i < udtL.blocks.size(); i++) {
+            MatType blk = onePlusInv(udtL.blocks[i], udtR.blocks[i]);
+            res.block(i * blkSize, i * blkSize, blkSize, blkSize) = blk;
+        }
+        return res;
+    }
+
     int n = udtR.U.cols();
     MatType tem1 = udtR.U.adjoint() * udtL.U;
     MatType tem2 = udtR.T * udtL.T.adjoint();
