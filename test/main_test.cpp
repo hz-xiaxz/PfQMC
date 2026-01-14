@@ -190,7 +190,7 @@ TEST(FastUpdateTest, GreenFunction) {
     DataType sign = 1.0;
     SpinlessVOperator* p = (SpinlessVOperator*) walker.op_array[l];
     for (int i = 0; i < (Lx*Ly)/2; i++) {
-        p->singleFlip(g, i, -0.1, flip, sign);
+        p->singleFlip(g, i, flip, sign);
         EXPECT_EQ(flip, true);
     }
     EXPECT_NEAR(std::abs(sign - 1.0), 0.0, 1e-10);
