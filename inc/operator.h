@@ -12,6 +12,8 @@ public:
     // long long para_rows;
     // long long para_cols;
     // MatType *para;
+    long long accepted = 0;
+    long long total = 0;
     virtual void left_multiply(const MatType &A, MatType &B){};
     virtual void inv_left_multiply(const MatType &A, MatType &B){};
     virtual void adjoint_left_multiply(const MatType &A, MatType &B){};
