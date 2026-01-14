@@ -445,8 +445,10 @@ class SpinlessVOperator : public Operator {
             int replica = 0;
             double rand = rd->rdUniform01();
             DataType r = getRatio(g, replica, idxAux);
+            total++;
             bool accept = rand < std::abs(r);
             if (accept) {
+                accepted++;
                 flag = true;
                 signCur *= (r / std::abs(r));
                 updateSingleReplica(g, replica, idxAux);
@@ -467,9 +469,11 @@ class SpinlessVOperator : public Operator {
 
             // --- Combined Acceptance ---
             DataType r_total = r_A * r_B;
+            total++;
             bool accept = rand < std::abs(r_total);
             
             if (accept) {
+                accepted++;
                 flag = true;
                 signCur *= (r_total / std::abs(r_total));
                 updateBlockPair(g, rA, rB, idxAux);
