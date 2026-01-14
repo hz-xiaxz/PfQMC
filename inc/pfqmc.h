@@ -24,6 +24,9 @@ public:
     std::vector<UDT> udtR;
 
     DataType sign;
+    
+    long long acceptedUpdates = 0;
+    long long totalUpdates = 0;
 
     PfQMC(Spinless_tV *walker, int _stb = 10, int _nReplicas = 1, Operator* _mixingOp = nullptr);
 
@@ -35,8 +38,8 @@ public:
         
         // Apply mixing operator first if it exists
         if (mixingOp != nullptr) {
-            mixingOp->left_multiply(Aseg, tmp);
-            std::swap(Aseg, tmp);
+            // apply swap operator here
+            // to a 2*2 block
         }
 
         for (int l = 0; l < op_length; l++)
@@ -48,7 +51,11 @@ public:
             {
                 if (curSeg == 0)
                 {
-                    udtR[curSeg] = UDT(Aseg); // TODO: performance check
+                    int nBlocks = 1;
+                    if (nReplicas > 1) {
+                        nBlocks = (mixingOp != nullptr) ? 2 : nReplicas;
+                    }
+                    udtR[curSeg] = UDT(Aseg, nBlocks); // TODO: performance check
                 }
                 else
                 {
@@ -73,8 +80,7 @@ public:
             
             // Apply mixing operator at l=0 (end of time evolution in this direction)
             if (l == 0 && mixingOp != nullptr) {
-                mixingOp->right_multiply(Aseg, tmp);
-                std::swap(Aseg, tmp);
+                // to apply swap operator
             }
 
             if (need_stabilization[l])
@@ -82,7 +88,11 @@ public:
                 Aseg.adjointInPlace();
                 if (curSeg == (checkpoints - 1))
                 {
-                    udtL[curSeg] = UDT(Aseg); // TODO: performance check
+                    int nBlocks = 1;
+                    if (nReplicas > 1) {
+                        nBlocks = (mixingOp != nullptr) ? 2 : nReplicas;
+                    }
+                    udtL[curSeg] = UDT(Aseg, nBlocks); // TODO: performance check
                 }
                 else
                 {

@@ -62,7 +62,11 @@ void PfQMC::rightSweep()
             // re-evaluate the UDT of current segment
             if (curSeg == 0)
             {
-                udtR[curSeg] = UDT(Aseg); // TODO: performance check
+                int nBlocks = 1;
+                if (nReplicas > 1) {
+                    nBlocks = (mixingOp != nullptr) ? 2 : nReplicas;
+                }
+                udtR[curSeg] = UDT(Aseg, nBlocks); // TODO: performance check
             }
             else
             {
@@ -102,6 +106,12 @@ void PfQMC::leftSweep()
         signCur = op_array[l]->update(g);
         sign *= signCur;
         
+        // Aggregate counters
+        acceptedUpdates += op_array[l]->accepted;
+        totalUpdates += op_array[l]->total;
+        op_array[l]->accepted = 0;
+        op_array[l]->total = 0;
+        
         op_array[l]->right_multiply(Aseg, tmp);
         std::swap(Aseg, tmp);
 
@@ -111,6 +121,10 @@ void PfQMC::leftSweep()
         // if need_stabilization[0] is true (which it usually is).
         if (l == 0 && mixingOp != nullptr) {
             mixingOp->right_propagate(g, tmp);
+            
+            DataType signMix = mixingOp->update(g);
+            this->sign *= signMix;
+
             mixingOp->right_multiply(Aseg, tmp);
             std::swap(Aseg, tmp);
         }
@@ -121,7 +135,11 @@ void PfQMC::leftSweep()
             // re-evaluate the UDT of current segment
             if (curSeg == (checkpoints - 1))
             {
-                udtL[curSeg] = UDT(Aseg); // TODO: performance check
+                int nBlocks = 1;
+                if (nReplicas > 1) {
+                    nBlocks = (mixingOp != nullptr) ? 2 : nReplicas;
+                }
+                udtL[curSeg] = UDT(Aseg, nBlocks); // TODO: performance check
             }
             else
             {
@@ -149,7 +167,13 @@ DataType PfQMC::getSignRaw()
 {
     const MatType identity = MatType::Identity(nDim, nDim);
     const DataType extraSign = ((nDim / 2) % 2 == 0) ? 1.0 : -1.0;
-    UDT A(nDim);
+    
+    int nBlocks = 1;
+    if (nReplicas > 1) {
+        nBlocks = (mixingOp != nullptr) ? 2 : nReplicas;
+    }
+    MatType id = MatType::Identity(nDim, nDim);
+    UDT A(id, nBlocks);
     
     // Start with mixing operator if it exists
     if (mixingOp != nullptr) {
