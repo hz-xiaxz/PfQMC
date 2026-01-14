@@ -214,7 +214,7 @@ int main_honeycombSingleMajorana(int Lx, int Ly, int LTau, double dt, double V, 
     return 0;
 }
 
-int main_honeycomb_4replica(int Lx, int Ly, int LTau, double dt, double V, int nthreads, int nseed, int evaluationLength, char* filename) {
+int main_honeycomb_4replica(int Lx, int Ly, int LTau, double dt, double V, int nthreads, int nseed, int evaluationLength, char* filename, bool useSwap = false) {
     double start_time = omp_get_wtime();
     mkl_set_num_threads(nthreads);
 
@@ -234,8 +234,12 @@ int main_honeycomb_4replica(int Lx, int Ly, int LTau, double dt, double V, int n
     // For Renyi entropy S2, we need SWAP operator between replicas
     // But for now let's just use Identity to verify stability
     int nDimSingle = config.nDim;
-    MatType I_pair = MatType::Identity(2 * nDimSingle, 2 * nDimSingle);
-    MixingOperator* mixingOp = new MixingOperator(nDimSingle, I_pair, I_pair);
+    MixingOperator* mixingOp;
+    if (useSwap) {
+        mixingOp = new TrivialSwapOperator(nReplicas, nDimSingle, &rd);
+    } else {
+        mixingOp = new MixingOperator(nReplicas, nDimSingle, &rd);
+    }
     
     // Create walker with 4 replicas
     // We need to modify Honeycomb_tV to support replicas or create a new one
@@ -282,12 +286,18 @@ int main_honeycomb_4replica(int Lx, int Ly, int LTau, double dt, double V, int n
 
         for (int j=0; j<3; j++) {
             std::vector<iVecType*> s_vec(4);
-            for(int r=0; r<4; r++) {
-                s_vec[r] = new iVecType(Lx*Ly); // nUnitcell
-                for (int k=0; k<Lx*Ly; k++) (*s_vec[r])(k) = rd.rdZ2();
+            
+            // Generate for replica 0
+            s_vec[0] = new iVecType(Lx*Ly);
+            for (int k=0; k<Lx*Ly; k++) (*s_vec[0])(k) = rd.rdZ2();
+            
+            // Copy to other replicas to ensure identical initialization
+            for(int r=1; r<4; r++) {
+                s_vec[r] = new iVecType(Lx*Ly);
+                *s_vec[r] = *s_vec[0];
             }
+            
             op_array[4*i + j + 1] = new SpinlessVOperator(&config, s_vec, j, &rd, 4);
-            ((SpinlessVOperator*)op_array[4*i + j + 1])->setAssumeBlockDiagonal(true);
         }
     }
     op_array[4*LTau] = createDenseOp(expKhalf);
@@ -663,6 +673,39 @@ int main(int argc, char* argv[]) {
             filepath, Lx, Ly, LTau, dt, V, myid, nseeds[myid]);
         std::cout << "filename = " << filename << std::endl;
         ok = main_honeycomb_4replica(Lx, Ly, LTau, dt, V, nthreads, nseeds[myid], evaluationLength, filename);
+
+    } else if (std::strcmp(argv[1], "--MRhoneycomb4-swap") == 0) {
+        int Lx, Ly, LTau, nthreads, nseed, evaluationLength;
+        char* filepath;
+        double dt, V;
+        char filename[100];
+
+        Lx = std::stoi(argv[2]);
+        Ly = std::stoi(argv[3]);
+        LTau = std::stoi(argv[4]);
+        dt = std::stod(argv[5]);
+        V = std::stod(argv[6]);
+        nthreads = std::stoi(argv[7]);
+        nseed = std::stoi(argv[8]);
+        evaluationLength = std::stoi(argv[9]);
+        filepath = argv[10];
+
+        int numprocs, myid;
+        MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
+        MPI_Comm_rank(MPI_COMM_WORLD, &myid);
+
+        srand(nseed);
+        int nseeds[numprocs];
+        for (int i = 0; i < numprocs; i++) {
+            nseeds[i] = rand();
+        }
+        
+        sprintf(filename, "%shoneycomb4swap-%d-%d-%d-%.2lf-%.2lf-%d-%d.out", 
+            filepath, Lx, Ly, LTau, dt, V, myid, nseeds[myid]);
+        std::cout << "filename = " << filename << std::endl;
+        // Call main_honeycomb_4replica with a flag or a new function?
+        // Let's overload main_honeycomb_4replica to accept a boolean for trivial swap
+        ok = main_honeycomb_4replica(Lx, Ly, LTau, dt, V, nthreads, nseeds[myid], evaluationLength, filename, true);
 
     } else if (std::strcmp(argv[1], "--chain") == 0) {
         int Lx, LTau, nthreads, nseed, evaluationLength, hsScheme, boundary;
