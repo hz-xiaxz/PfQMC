@@ -3,6 +3,7 @@
 
 #include "operator.h"
 #include "types.h"
+#include <iostream>
 
 class SpinlessTvUtils {
    public:
@@ -213,6 +214,10 @@ class SpinlessVOperator : public Operator {
         }
     }
 
+    // Disable copy constructor and assignment operator to prevent double-free
+    SpinlessVOperator(const SpinlessVOperator&) = delete;
+    SpinlessVOperator& operator=(const SpinlessVOperator&) = delete;
+
     // Rebuild the full block-diagonal B matrix from per-replica matrices
     void rebuildFullB() {
         if (nReplicas == 1) {
@@ -239,10 +244,6 @@ class SpinlessVOperator : public Operator {
             config->InteractionBGenerator(B_inv_r, *s[r], bondType, true);
             B_inv.block(r * nDimSingle, r * nDimSingle, nDimSingle, nDimSingle) = B_inv_r;
         }
-    }
-
-    void setAssumeBlockDiagonal(bool val) {
-        assumeBlockDiagonal = val;
     }
 
     // virtual inline void aux2MajoranaIdx(int idxAux, int imaj, int& idx1, int&
@@ -279,69 +280,6 @@ class SpinlessVOperator : public Operator {
             r *= etaM;
         }
         return r;
-    }
-
-    void updateReplica(MatType &g, int replica, int idxAux) {
-        int offset = replica * nDimSingle;
-        int auxCur = (*s[replica])(idxAux);
-        const int inc = 1;
-        
-        if (hsScheme == 0) {
-            for (int imaj = 0; imaj < 2; imaj++) {
-                int idx1, idx2;
-                config->aux2MajoranaIdx(idxAux, imaj, bondType, idx1, idx2);
-                int idx1_g = offset + idx1;
-                int idx2_g = offset + idx2;
-                
-                DataType tmp_update = (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx1_g, idx2_g)));
-
-                (*s[replica])(idxAux) = -auxCur;
-                B_replica[replica](idx1, idx2) = -B_replica[replica](idx1, idx2);
-                B_replica[replica](idx2, idx1) = -B_replica[replica](idx2, idx1);
-
-                cVecType x1 = -g.col(idx1_g);
-                cVecType x2 = -g.col(idx2_g);
-                x1(idx1_g) += 2;
-                x2(idx2_g) += 2;
-                DataType alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp_update;
-                
-                zgeru(&nDim, &nDim, &alpha, x1.data(), &inc, x2.data(), &inc, g.data(), &nDim);
-                alpha = -alpha;
-                zgeru(&nDim, &nDim, &alpha, x2.data(), &inc, x1.data(), &inc, g.data(), &nDim);
-            }
-        } else { // hsScheme == 1
-            int idxj1, idxk1, idxj2, idxk2;
-            config->aux2MajoranaIdx(idxAux, 0, bondType, idxj1, idxk1);
-            config->aux2MajoranaIdx(idxAux, 1, bondType, idxj2, idxk2);
-            for (int iaux = 0; iaux < 2; iaux++) {
-                int idx1, idx2;
-                DataType tmp_update;
-                 if (iaux == 0) {
-                    idx1 = idxj1; idx2 = idxj2;
-                    tmp_update = (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(offset + idx1, offset + idx2)));
-                } else {
-                    idx1 = idxk1; idx2 = idxk2;
-                    tmp_update = (1.0 + ((1.0i) * (config->thlV) * double(auxCur) * g(offset + idx1, offset + idx2)));
-                }
-                int idx1_g = offset + idx1;
-                int idx2_g = offset + idx2;
-
-                (*s[replica])(idxAux) = -auxCur;
-                B_replica[replica](idx1, idx2) = -B_replica[replica](idx1, idx2);
-                B_replica[replica](idx2, idx1) = -B_replica[replica](idx2, idx1);
-
-                cVecType x1 = -g.col(idx1_g);
-                cVecType x2 = -g.col(idx2_g);
-                x1(idx1_g) += 2;
-                x2(idx2_g) += 2;
-                DataType alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp_update;
-                if (iaux == 1) alpha = -alpha;
-                
-                zgeru(&nDim, &nDim, &alpha, x1.data(), &inc, x2.data(), &inc, g.data(), &nDim);
-                alpha = -alpha;
-                zgeru(&nDim, &nDim, &alpha, x2.data(), &inc, x1.data(), &inc, g.data(), &nDim);
-            }
-        }
     }
 
     void updateBlockPair(MatType &g, int rA, int rB, int idxAux) {
@@ -430,7 +368,92 @@ class SpinlessVOperator : public Operator {
         }
     }
 
+    void updateSingleReplica(MatType &g, int replica, int idxAux) {
+        int offset = replica * nDimSingle;
+        int auxCur = (*s[replica])(idxAux);
+        const int inc = 1;
+        // For single replica, we update the whole matrix (or the relevant block if we had block diagonal structure, 
+        // but here nReplicas=1 implies nDim = nDimSingle)
+        int nDim_local = nDim; 
+
+        if (hsScheme == 0) {
+            for (int imaj = 0; imaj < 2; imaj++) {
+                int idx1, idx2;
+                config->aux2MajoranaIdx(idxAux, imaj, bondType, idx1, idx2);
+                int idx1_g = offset + idx1;
+                int idx2_g = offset + idx2;
+                
+                DataType tmp_update = (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx1_g, idx2_g)));
+
+                (*s[replica])(idxAux) = -auxCur;
+                B_replica[replica](idx1, idx2) = -B_replica[replica](idx1, idx2);
+                B_replica[replica](idx2, idx1) = -B_replica[replica](idx2, idx1);
+
+                DataType alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp_update;
+
+                cVecType x1 = -g.col(idx1_g);
+                cVecType x2 = -g.col(idx2_g);
+                
+                x1(idx1_g) += 2.0;
+                x2(idx2_g) += 2.0;
+
+                zgeru(&nDim_local, &nDim_local, &alpha, x1.data(), &inc, x2.data(), &inc, g.data(), &nDim_local);
+
+                alpha = -alpha;
+                zgeru(&nDim_local, &nDim_local, &alpha, x2.data(), &inc, x1.data(), &inc, g.data(), &nDim_local);
+            }
+        } else { // hsScheme == 1
+            int idxj1, idxk1, idxj2, idxk2;
+            config->aux2MajoranaIdx(idxAux, 0, bondType, idxj1, idxk1);
+            config->aux2MajoranaIdx(idxAux, 1, bondType, idxj2, idxk2);
+            for (int iaux = 0; iaux < 2; iaux++) {
+                int idx1, idx2;
+                DataType tmp_update;
+                if (iaux == 0) {
+                    idx1 = idxj1; idx2 = idxj2;
+                    tmp_update = (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(offset + idx1, offset + idx2)));
+                } else {
+                    idx1 = idxk1; idx2 = idxk2;
+                    tmp_update = (1.0 + ((1.0i) * (config->thlV) * double(auxCur) * g(offset + idx1, offset + idx2)));
+                }
+                int idx1_g = offset + idx1;
+                int idx2_g = offset + idx2;
+
+                (*s[replica])(idxAux) = -auxCur;
+                B_replica[replica](idx1, idx2) = -B_replica[replica](idx1, idx2);
+                B_replica[replica](idx2, idx1) = -B_replica[replica](idx2, idx1);
+
+                DataType alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp_update;
+                if (iaux == 1) alpha = -alpha;
+
+                cVecType x1 = -g.col(idx1_g);
+                cVecType x2 = -g.col(idx2_g);
+                
+                x1(idx1_g) += 2.0;
+                x2(idx2_g) += 2.0;
+
+                zgeru(&nDim_local, &nDim_local, &alpha, x1.data(), &inc, x2.data(), &inc, g.data(), &nDim_local);
+
+                alpha = -alpha;
+                zgeru(&nDim_local, &nDim_local, &alpha, x2.data(), &inc, x1.data(), &inc, g.data(), &nDim_local);
+            }
+        }
+    }
+
     void singleFlip(MatType &g, int idxAux, bool &flag, DataType &signCur) {
+        if (nReplicas == 1) {
+            int replica = 0;
+            double rand = rd->rdUniform01();
+            DataType r = getRatio(g, replica, idxAux);
+            bool accept = rand < std::abs(r);
+            if (accept) {
+                flag = true;
+                signCur *= (r / std::abs(r));
+                updateSingleReplica(g, replica, idxAux);
+            }
+            return;
+        }
+
         // Loop over replica pairs
         for (int p = 0; p < nReplicas / 2; p++) {
             int rA = 2 * p;
@@ -449,16 +472,10 @@ class SpinlessVOperator : public Operator {
             if (accept) {
                 flag = true;
                 signCur *= (r_total / std::abs(r_total));
-                
-                if (assumeBlockDiagonal) {
-                    updateBlockPair(g, rA, rB, idxAux);
-                } else {
-                    updateReplica(g, rA, idxAux);
-                    updateReplica(g, rB, idxAux);
-                }
+                updateBlockPair(g, rA, rB, idxAux);
             }
         }
-    };
+    }
 
     DataType getRatioSingleMajorana(MatType &g, int replica, int idxAux) {
         int offset = replica * nDimSingle;
@@ -479,8 +496,9 @@ class SpinlessVOperator : public Operator {
         int auxCur = (*s[replica])(idxAux);
         int idx1, idx2;
         DataType tmp;
-        const int inc = 1;
+        int inc = 1;
         DataType alpha;
+        int nDim_local = nDim; // Local copy for BLAS calls
 
         config->aux2MajoranaIdx(idxAux, 0, bondType, idx1, idx2);
         int idx1_g = offset + idx1;
@@ -500,9 +518,9 @@ class SpinlessVOperator : public Operator {
         x2(idx2_g) += 2;
         alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp;
 
-        zgeru(&nDim, &nDim, &alpha, x1.data(), &inc, x2.data(), &inc, g.data(), &nDim);
+        zgeru(&nDim_local, &nDim_local, &alpha, x1.data(), &inc, x2.data(), &inc, g.data(), &nDim_local);
         alpha = -alpha;
-        zgeru(&nDim, &nDim, &alpha, x2.data(), &inc, x1.data(), &inc, g.data(), &nDim);
+        zgeru(&nDim_local, &nDim_local, &alpha, x2.data(), &inc, x1.data(), &inc, g.data(), &nDim_local);
     }
 
     void updateBlockPairSingleMajorana(MatType &g, int rA, int rB, int idxAux) {
@@ -510,7 +528,8 @@ class SpinlessVOperator : public Operator {
         int blkOffset = p * 2 * nDimSingle;
         int blkSize = 2 * nDimSingle;
         DataType* g_block_ptr = g.data() + blkOffset + blkOffset * nDim;
-        const int inc = 1;
+        int inc = 1;
+        int nDim_local = nDim; // Local copy for BLAS calls
 
         for (int replica : {rA, rB}) {
             int offset = replica * nDimSingle;
@@ -542,14 +561,15 @@ class SpinlessVOperator : public Operator {
             x1_seg(idx1_local) += 2.0;
             x2_seg(idx2_local) += 2.0;
 
-            zgeru(&blkSize, &blkSize, &alpha, x1_seg.data(), &inc, x2_seg.data(), &inc, g_block_ptr, &nDim);
+            zgeru(&blkSize, &blkSize, &alpha, x1_seg.data(), &inc, x2_seg.data(), &inc, g_block_ptr, &nDim_local);
 
             alpha = -alpha;
-            zgeru(&blkSize, &blkSize, &alpha, x2_seg.data(), &inc, x1_seg.data(), &inc, g_block_ptr, &nDim);
+            zgeru(&blkSize, &blkSize, &alpha, x2_seg.data(), &inc, x1_seg.data(), &inc, g_block_ptr, &nDim_local);
         }
     }
 
     void singleFlipSingleMajorana(MatType &g, int idxAux, bool &flag, DataType &signCur) {
+        // Loop over replica pairs
         for (int p = 0; p < nReplicas / 2; p++) {
             int rA = 2 * p;
             int rB = 2 * p + 1;
@@ -574,7 +594,7 @@ class SpinlessVOperator : public Operator {
                 }
             }
         }
-    };
+    }
 
     DataType update(MatType &g) override {
         bool flag = false;
@@ -584,7 +604,8 @@ class SpinlessVOperator : public Operator {
         // Loop over all aux indices
         for (int i = 0; i < s[0]->size(); i++) {
             if (singleMaj) {
-                singleFlipSingleMajorana(g, i, flag, signCur);
+                std::cout<< "not implemented" << std::endl;
+                
             } else {
                 singleFlip(g, i, flag, signCur);
             }
