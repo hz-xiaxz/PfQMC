@@ -14,3 +14,10 @@ slurm-**.out
 **.pl
 **.sh
 doc/
+.clangd
+.cache/
+debug/
+docs/
+research/
+output/
+*.png
