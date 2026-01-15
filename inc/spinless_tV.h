@@ -283,88 +283,83 @@ class SpinlessVOperator : public Operator {
         return r;
     }
 
-    void updateBlockPair(MatType &g, int rA, int rB, int idxAux) {
-        // Optimized update for block diagonal case (pair block)
-        // We assume rA and rB form a pair (0,1) or (2,3) etc.
-        // The block offset is determined by the pair index.
-        int p = rA / 2; // Assuming rA is even and rB is rA+1
+    // Update a single replica within a block pair (optimized for block-diagonal structure)
+    void updateReplicaInBlock(MatType &g, int replica, int idxAux) {
+        int p = replica / 2;
         int blkOffset = p * 2 * nDimSingle;
         int blkSize = 2 * nDimSingle;
         DataType* g_block_ptr = g.data() + blkOffset + blkOffset * nDim;
         const int inc = 1;
 
-        for (int replica : {rA, rB}) {
-            int offset = replica * nDimSingle;
-            int auxCur = (*s[replica])(idxAux);
+        int offset = replica * nDimSingle;
+        int auxCur = (*s[replica])(idxAux);
 
-            if (hsScheme == 0) {
-                for (int imaj = 0; imaj < 2; imaj++) {
-                    int idx1, idx2;
-                    config->aux2MajoranaIdx(idxAux, imaj, bondType, idx1, idx2);
-                    int idx1_g = offset + idx1;
-                    int idx2_g = offset + idx2;
-                    
-                    DataType tmp_update = (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx1_g, idx2_g)));
+        if (hsScheme == 0) {
+            for (int imaj = 0; imaj < 2; imaj++) {
+                int idx1, idx2;
+                config->aux2MajoranaIdx(idxAux, imaj, bondType, idx1, idx2);
+                int idx1_g = offset + idx1;
+                int idx2_g = offset + idx2;
 
-                    (*s[replica])(idxAux) = -auxCur;
-                    B_replica[replica](idx1, idx2) = -B_replica[replica](idx1, idx2);
-                    B_replica[replica](idx2, idx1) = -B_replica[replica](idx2, idx1);
+                DataType tmp_update = (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(idx1_g, idx2_g)));
 
-                    DataType alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp_update;
+                (*s[replica])(idxAux) = -auxCur;
+                B_replica[replica](idx1, idx2) = -B_replica[replica](idx1, idx2);
+                B_replica[replica](idx2, idx1) = -B_replica[replica](idx2, idx1);
 
-                    // Extract relevant segments of columns to local vectors
-                    cVecType x1_seg = -g.col(idx1_g).segment(blkOffset, blkSize);
-                    cVecType x2_seg = -g.col(idx2_g).segment(blkOffset, blkSize);
-                    
-                    int idx1_local = idx1_g - blkOffset;
-                    int idx2_local = idx2_g - blkOffset;
-                    
-                    x1_seg(idx1_local) += 2.0;
-                    x2_seg(idx2_local) += 2.0;
+                DataType alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp_update;
 
-                    zgeru(&blkSize, &blkSize, &alpha, x1_seg.data(), &inc, x2_seg.data(), &inc, g_block_ptr, &nDim);
+                cVecType x1_seg = -g.col(idx1_g).segment(blkOffset, blkSize);
+                cVecType x2_seg = -g.col(idx2_g).segment(blkOffset, blkSize);
 
-                    alpha = -alpha;
-                    zgeru(&blkSize, &blkSize, &alpha, x2_seg.data(), &inc, x1_seg.data(), &inc, g_block_ptr, &nDim);
+                int idx1_local = idx1_g - blkOffset;
+                int idx2_local = idx2_g - blkOffset;
+
+                x1_seg(idx1_local) += 2.0;
+                x2_seg(idx2_local) += 2.0;
+
+                zgeru(&blkSize, &blkSize, &alpha, x1_seg.data(), &inc, x2_seg.data(), &inc, g_block_ptr, &nDim);
+
+                alpha = -alpha;
+                zgeru(&blkSize, &blkSize, &alpha, x2_seg.data(), &inc, x1_seg.data(), &inc, g_block_ptr, &nDim);
+            }
+        } else { // hsScheme == 1
+            int idxj1, idxk1, idxj2, idxk2;
+            config->aux2MajoranaIdx(idxAux, 0, bondType, idxj1, idxk1);
+            config->aux2MajoranaIdx(idxAux, 1, bondType, idxj2, idxk2);
+            for (int iaux = 0; iaux < 2; iaux++) {
+                int idx1, idx2;
+                DataType tmp_update;
+                if (iaux == 0) {
+                    idx1 = idxj1; idx2 = idxj2;
+                    tmp_update = (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(offset + idx1, offset + idx2)));
+                } else {
+                    idx1 = idxk1; idx2 = idxk2;
+                    tmp_update = (1.0 + ((1.0i) * (config->thlV) * double(auxCur) * g(offset + idx1, offset + idx2)));
                 }
-            } else { // hsScheme == 1
-                int idxj1, idxk1, idxj2, idxk2;
-                config->aux2MajoranaIdx(idxAux, 0, bondType, idxj1, idxk1);
-                config->aux2MajoranaIdx(idxAux, 1, bondType, idxj2, idxk2);
-                for (int iaux = 0; iaux < 2; iaux++) {
-                    int idx1, idx2;
-                    DataType tmp_update;
-                    if (iaux == 0) {
-                        idx1 = idxj1; idx2 = idxj2;
-                        tmp_update = (1.0 - ((1.0i) * (config->thlV) * double(auxCur) * g(offset + idx1, offset + idx2)));
-                    } else {
-                        idx1 = idxk1; idx2 = idxk2;
-                        tmp_update = (1.0 + ((1.0i) * (config->thlV) * double(auxCur) * g(offset + idx1, offset + idx2)));
-                    }
-                    int idx1_g = offset + idx1;
-                    int idx2_g = offset + idx2;
+                int idx1_g = offset + idx1;
+                int idx2_g = offset + idx2;
 
-                    (*s[replica])(idxAux) = -auxCur;
-                    B_replica[replica](idx1, idx2) = -B_replica[replica](idx1, idx2);
-                    B_replica[replica](idx2, idx1) = -B_replica[replica](idx2, idx1);
+                (*s[replica])(idxAux) = -auxCur;
+                B_replica[replica](idx1, idx2) = -B_replica[replica](idx1, idx2);
+                B_replica[replica](idx2, idx1) = -B_replica[replica](idx2, idx1);
 
-                    DataType alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp_update;
-                    if (iaux == 1) alpha = -alpha;
+                DataType alpha = (+1.0i) * double(auxCur) * (config->thlV) / tmp_update;
+                if (iaux == 1) alpha = -alpha;
 
-                    cVecType x1_seg = -g.col(idx1_g).segment(blkOffset, blkSize);
-                    cVecType x2_seg = -g.col(idx2_g).segment(blkOffset, blkSize);
-                    
-                    int idx1_local = idx1_g - blkOffset;
-                    int idx2_local = idx2_g - blkOffset;
-                    
-                    x1_seg(idx1_local) += 2.0;
-                    x2_seg(idx2_local) += 2.0;
+                cVecType x1_seg = -g.col(idx1_g).segment(blkOffset, blkSize);
+                cVecType x2_seg = -g.col(idx2_g).segment(blkOffset, blkSize);
 
-                    zgeru(&blkSize, &blkSize, &alpha, x1_seg.data(), &inc, x2_seg.data(), &inc, g_block_ptr, &nDim);
+                int idx1_local = idx1_g - blkOffset;
+                int idx2_local = idx2_g - blkOffset;
 
-                    alpha = -alpha;
-                    zgeru(&blkSize, &blkSize, &alpha, x2_seg.data(), &inc, x1_seg.data(), &inc, g_block_ptr, &nDim);
-                }
+                x1_seg(idx1_local) += 2.0;
+                x2_seg(idx2_local) += 2.0;
+
+                zgeru(&blkSize, &blkSize, &alpha, x1_seg.data(), &inc, x2_seg.data(), &inc, g_block_ptr, &nDim);
+
+                alpha = -alpha;
+                zgeru(&blkSize, &blkSize, &alpha, x2_seg.data(), &inc, x1_seg.data(), &inc, g_block_ptr, &nDim);
             }
         }
     }
@@ -441,43 +436,28 @@ class SpinlessVOperator : public Operator {
         }
     }
 
-    void singleFlip(MatType &g, int idxAux, bool &flag, DataType &signCur) {
+    void singleFlip(MatType &g, int idxAux, DataType &signCur) {
         if (nReplicas == 1) {
-            int replica = 0;
             double rand = rd->rdUniform01();
-            DataType r = getRatio(g, replica, idxAux);
+            DataType r = getRatio(g, 0, idxAux);
             total++;
-            bool accept = rand < std::abs(r);
-            if (accept) {
+            if (rand < std::abs(r)) {
                 accepted++;
-                flag = true;
                 signCur *= (r / std::abs(r));
-                updateSingleReplica(g, replica, idxAux);
+                updateSingleReplica(g, 0, idxAux);
             }
             return;
         }
 
-        // Loop over replica pairs
-        for (int p = 0; p < nReplicas / 2; p++) {
-            int rA = 2 * p;
-            int rB = 2 * p + 1;
-            
-            // Generate ONE random number for the pair
+        // Loop over all replicas with independent acceptance
+        for (int replica = 0; replica < nReplicas; replica++) {
             double rand = rd->rdUniform01();
-            
-            DataType r_A = getRatio(g, rA, idxAux);
-            DataType r_B = getRatio(g, rB, idxAux);
-
-            // --- Combined Acceptance ---
-            DataType r_total = r_A * r_B;
+            DataType r = getRatio(g, replica, idxAux);
             total++;
-            bool accept = rand < std::abs(r_total);
-            
-            if (accept) {
+            if (rand < std::abs(r)) {
                 accepted++;
-                flag = true;
-                signCur *= (r_total / std::abs(r_total));
-                updateBlockPair(g, rA, rB, idxAux);
+                signCur *= (r / std::abs(r));
+                updateReplicaInBlock(g, replica, idxAux);
             }
         }
     }
@@ -602,17 +582,13 @@ class SpinlessVOperator : public Operator {
     }
 
     DataType update(MatType &g) override {
-        bool flag = false;
         DataType signCur = 1.0;
-        
-        // Loop over all replicas
-        // Loop over all aux indices
+
         for (int i = 0; i < s[0]->size(); i++) {
             if (singleMaj) {
                 std::cout<< "not implemented" << std::endl;
-                
             } else {
-                singleFlip(g, i, flag, signCur);
+                singleFlip(g, i, signCur);
             }
         }
         return signCur;
