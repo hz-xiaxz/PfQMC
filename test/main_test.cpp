@@ -186,12 +186,10 @@ TEST(FastUpdateTest, GreenFunction) {
     // MatType gcopy = g;
     EXPECT_EQ(walker.op_array[l]->getType(), 2);
 
-    bool flip = false;
     DataType sign = 1.0;
     SpinlessVOperator* p = (SpinlessVOperator*) walker.op_array[l];
     for (int i = 0; i < (Lx*Ly)/2; i++) {
-        p->singleFlip(g, i, flip, sign);
-        EXPECT_EQ(flip, true);
+        p->singleFlip(g, i, sign);
     }
     EXPECT_NEAR(std::abs(sign - 1.0), 0.0, 1e-10);
     // std::cout << ( g + g.transpose() - (2*identity) ).squaredNorm() << " test g skew\n";
