@@ -4,6 +4,7 @@
 #include "operator.h"
 #include "types.h"
 #include <iostream>
+#include <cassert>
 
 class SpinlessTvUtils {
    public:
