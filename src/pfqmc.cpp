@@ -41,10 +41,18 @@ void PfQMC::rightSweep()
     DataType signCur;
 
     // Apply mixing operator at τ=0 first if it exists
-    if (mixingOp != nullptr) {
+    UDT mixUDT;
+    bool hasMix = (mixingOp != nullptr);
+    if (hasMix) {
         mixingOp->left_propagate(g, tmp);
         mixingOp->left_multiply(Aseg, tmp);
         std::swap(Aseg, tmp);
+        
+        // Immediate UDT after mixing
+        int nBlocks = (nReplicas > 1) ? 2 : 1;
+        mixUDT = UDT(Aseg, nBlocks);
+        Aseg = MatType::Identity(nDim, nDim);
+        // !FIXME: update Mixing for the sign
     }
 
     for (int l = 0; l < op_length; l++)
@@ -60,14 +68,17 @@ void PfQMC::rightSweep()
             // auto g2 = g;
             // op_array[i]->left_propagate(g2, tmp);
             // re-evaluate the UDT of current segment
-            if (curSeg == 0)
-            {
-                int nBlocks = 1;
-                if (nReplicas > 1) {
-                    nBlocks = (mixingOp != nullptr) ? 2 : nReplicas;
+                if (curSeg == 0)
+                {
+                    int nBlocks = 1;
+                    if (nReplicas > 1) {
+                        nBlocks = (mixingOp != nullptr) ? 2 : nReplicas;
+                    }
+                    udtR[curSeg] = UDT(Aseg, nBlocks); // TODO: performance check
+                    if (hasMix) {
+                        udtR[curSeg] = udtR[curSeg] * mixUDT;
+                    }
                 }
-                udtR[curSeg] = UDT(Aseg, nBlocks); // TODO: performance check
-            }
             else
             {
                 udtR[curSeg] = Aseg * udtR[curSeg - 1];

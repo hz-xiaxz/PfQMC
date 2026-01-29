@@ -2,228 +2,298 @@
 #define MIXING_OPERATOR_H
 
 #include "operator.h"
-#include <vector>
+#include <Eigen/Dense>
 #include <cmath>
 #include <iostream>
-#include <Eigen/Dense>
+#include <vector>
 
 // Operator that handles swapping between replicas at the boundary
+// The SWAP operator for fermions: S^{αβ}[σ] = exp(π/4 σ ψ^α ψ^β)
+// satisfies: S^† (ψ^α, ψ^β)^T S = σ (ψ^β, -ψ^α)^T
+// In matrix form for 2N×2N block: S = [0, I; -I, 0]
 class MixingOperator : public Operator {
 public:
-    int nReplicas;
-    int nDimSingle;
-    int nDim;
-    std::vector<bool> is_swapped; // true if pair p is swapped
-    rdGenerator* rd;
+  int nReplicas;
+  int nDimSingle;
+  int nDim;
+  std::vector<std::vector<int>>
+      sigma; // sigma[p][m] is the aux field for pair p, mode m
+  rdGenerator *rd;
 
-    // Constructor
-    MixingOperator(int _nReplicas, int _nDimSingle, rdGenerator* _rd) 
-        : nReplicas(_nReplicas), nDimSingle(_nDimSingle), rd(_rd) {
-        nDim = nReplicas * nDimSingle;
-        is_swapped.resize(nReplicas / 2, false); // Initialize as Identity
+  // Constructor
+  MixingOperator(int _nReplicas, int _nDimSingle, rdGenerator *_rd)
+      : nReplicas(_nReplicas), nDimSingle(_nDimSingle), rd(_rd) {
+    nDim = nReplicas * nDimSingle;
+    sigma.resize(nReplicas / 2);
+    for (int p = 0; p < nReplicas / 2; ++p) {
+      sigma[p].resize(nDimSingle);
+      for (int m = 0; m < nDimSingle; ++m) {
+        // Initialize randomly +1 or -1
+        sigma[p][m] = (rd->rdUniform01() < 0.5) ? 1 : -1;
+      }
     }
+  }
 
-    // Destructor
-    ~MixingOperator() override {}
+  // Destructor
+  ~MixingOperator() override {}
 
-    // --- Operator Interface Implementation ---
+  // --- Operator Interface Implementation ---
+  // Note: A and B are nDim × nDim matrices (block-diagonal with 2N×2N blocks
+  // per pair) The SWAP only acts on each 2N×2N diagonal block independently
 
-    // Apply the operator matrix B to A: B = Op * A
-    void left_multiply(const MatType &A, MatType &B) override {
-        // We need to copy A to B first, but with the swaps applied.
-        // Or just write directly to B.
-        // B must be same size as A.
-        
-        for(int p=0; p < nReplicas/2; ++p) {
-            int rA = 2*p;
-            int rB = 2*p+1;
-            int offsetA = rA * nDimSingle;
-            int offsetB = rB * nDimSingle;
-            
-            if(is_swapped[p]) {
-                // Row rA in B comes from Row rB in A
-                B.block(offsetA, 0, nDimSingle, A.cols()) = A.block(offsetB, 0, nDimSingle, A.cols());
-                // Row rB in B comes from Row rA in A
-                B.block(offsetB, 0, nDimSingle, A.cols()) = A.block(offsetA, 0, nDimSingle, A.cols());
-            } else {
-                B.block(offsetA, 0, nDimSingle, A.cols()) = A.block(offsetA, 0, nDimSingle, A.cols());
-                B.block(offsetB, 0, nDimSingle, A.cols()) = A.block(offsetB, 0, nDimSingle, A.cols());
-            }
+  // Apply the operator matrix: B = S * A
+  // S = 1/sqrt(2) * (I + sigma * J)
+  // J = [0, 1; -1, 0]
+  void left_multiply(const MatType &A, MatType &B) override {
+    DataType factor = 1.0 / std::sqrt(2.0);
+    for (int p = 0; p < nReplicas / 2; ++p) {
+      int offsetA = 2 * p * nDimSingle;       // row offset for replica α
+      int offsetB = (2 * p + 1) * nDimSingle; // row offset for replica β
+      int blockCol =
+          2 * p * nDimSingle; // column offset for this pair's 2N block
+
+      for (int m = 0; m < nDimSingle; ++m) {
+        int s = sigma[p][m];
+        // S * A = 1/sqrt(2) * (A + s * J * A)
+        // J * A: row_α ← row_β, row_β ← -row_α
+        // row_α_new = factor * (row_α + s * row_β)
+        // row_β_new = factor * (row_β - s * row_α)
+
+        B.row(offsetA + m).segment(blockCol, 2 * nDimSingle) =
+            factor *
+            (A.row(offsetA + m).segment(blockCol, 2 * nDimSingle) +
+             (double)s * A.row(offsetB + m).segment(blockCol, 2 * nDimSingle));
+        B.row(offsetB + m).segment(blockCol, 2 * nDimSingle) =
+            factor *
+            (A.row(offsetB + m).segment(blockCol, 2 * nDimSingle) -
+             (double)s * A.row(offsetA + m).segment(blockCol, 2 * nDimSingle));
+      }
+    }
+  }
+
+  // B = A * S
+  void right_multiply(const MatType &A, MatType &B) override {
+    DataType factor = 1.0 / std::sqrt(2.0);
+    for (int p = 0; p < nReplicas / 2; ++p) {
+      int offsetA = 2 * p * nDimSingle;
+      int offsetB = (2 * p + 1) * nDimSingle;
+      int blockRow = 2 * p * nDimSingle; // row offset for this pair's 2N block
+
+      for (int m = 0; m < nDimSingle; ++m) {
+        int s = sigma[p][m];
+        // A * S = 1/sqrt(2) * (A + s * A * J)
+        // A * J: col_α ← -col_β, col_β ← col_α
+        // col_α_new = factor * (col_α - s * col_β)
+        // col_β_new = factor * (col_β + s * col_α)
+
+        B.col(offsetA + m).segment(blockRow, 2 * nDimSingle) =
+            factor *
+            (A.col(offsetA + m).segment(blockRow, 2 * nDimSingle) -
+             (double)s * A.col(offsetB + m).segment(blockRow, 2 * nDimSingle));
+        B.col(offsetB + m).segment(blockRow, 2 * nDimSingle) =
+            factor *
+            (A.col(offsetB + m).segment(blockRow, 2 * nDimSingle) +
+             (double)s * A.col(offsetA + m).segment(blockRow, 2 * nDimSingle));
+      }
+    }
+  }
+
+  // B = S^{-1} * A
+  // S^{-1} = 1/sqrt(2) * (I - sigma * J)
+  void inv_left_multiply(const MatType &A, MatType &B) override {
+    DataType factor = 1.0 / std::sqrt(2.0);
+    for (int p = 0; p < nReplicas / 2; ++p) {
+      int offsetA = 2 * p * nDimSingle;
+      int offsetB = (2 * p + 1) * nDimSingle;
+      int blockCol = 2 * p * nDimSingle;
+
+      for (int m = 0; m < nDimSingle; ++m) {
+        int s = sigma[p][m];
+        // S^{-1} * A = 1/sqrt(2) * (A - s * J * A)
+        // J * A: row_α ← row_β, row_β ← -row_α
+        // row_α_new = factor * (row_α - s * row_β)
+        // row_β_new = factor * (row_β + s * row_α)
+
+        B.row(offsetA + m).segment(blockCol, 2 * nDimSingle) =
+            factor *
+            (A.row(offsetA + m).segment(blockCol, 2 * nDimSingle) -
+             (double)s * A.row(offsetB + m).segment(blockCol, 2 * nDimSingle));
+        B.row(offsetB + m).segment(blockCol, 2 * nDimSingle) =
+            factor *
+            (A.row(offsetB + m).segment(blockCol, 2 * nDimSingle) +
+             (double)s * A.row(offsetA + m).segment(blockCol, 2 * nDimSingle));
+      }
+    }
+  }
+
+  // B = A * S^{-1}
+  void inv_right_multiply(const MatType &A, MatType &B) override {
+    DataType factor = 1.0 / std::sqrt(2.0);
+    for (int p = 0; p < nReplicas / 2; ++p) {
+      int offsetA = 2 * p * nDimSingle;
+      int offsetB = (2 * p + 1) * nDimSingle;
+      int blockRow = 2 * p * nDimSingle;
+
+      for (int m = 0; m < nDimSingle; ++m) {
+        int s = sigma[p][m];
+        // A * S^{-1} = 1/sqrt(2) * (A - s * A * J)
+        // A * J: col_α ← -col_β, col_β ← col_α
+        // col_α_new = factor * (col_α + s * col_β)
+        // col_β_new = factor * (col_β - s * col_α)
+
+        B.col(offsetA + m).segment(blockRow, 2 * nDimSingle) =
+            factor *
+            (A.col(offsetA + m).segment(blockRow, 2 * nDimSingle) +
+             (double)s * A.col(offsetB + m).segment(blockRow, 2 * nDimSingle));
+        B.col(offsetB + m).segment(blockRow, 2 * nDimSingle) =
+            factor *
+            (A.col(offsetB + m).segment(blockRow, 2 * nDimSingle) -
+             (double)s * A.col(offsetA + m).segment(blockRow, 2 * nDimSingle));
+      }
+    }
+  }
+
+
+  // Stabilized multiply for UDT
+  void stabilizedLeftMultiply(UDT &F) override {
+    // We cannot easily use the block structure of F because S mixes rows.
+    // So we apply to the full matrix U.
+    MatType U_new(F.U.rows(), F.U.cols());
+    left_multiply(F.U, U_new);
+    F.U = U_new;
+  }
+
+  // Calculate ratio for flipping sigma[p][m]
+  DataType getRatio(MatType &g, int p, int m) {
+    int offsetA = 2 * p * nDimSingle;
+    int offsetB = (2 * p + 1) * nDimSingle;
+    int s = sigma[p][m]; // Current state
+
+    // Extract G_12 (element connecting mode m of replica 1 and 2)
+    int idxA = offsetA + m;
+    int idxB = offsetB + m;
+
+    // User formula: ratio = 1 + sigma_m * G_12
+    // Assuming G_12 is g(idxA, idxB)
+    DataType G12 = g(idxA, idxB);
+
+    // Note: The formula 1 + s * G12 implies a specific update relation.
+    // We use it as requested.
+    return 1.0 + (double)s * G12;
+  }
+
+  // Perform local update restricted to the replica pair block
+  // This is now the default and only update method
+  void localUpdate(MatType &g, int p, int m) {
+    int blkOffset = 2 * p * nDimSingle;
+    int blkSize = 2 * nDimSingle;
+    DataType* g_block_ptr = g.data() + blkOffset + blkOffset * nDim;
+    int inc = 1;
+
+    // We only work on the block starting at blkOffset
+    // Indices relative to the block
+    int idxA_local = m;
+    int idxB_local = nDimSingle + m;
+
+    int s = sigma[p][m];
+
+    // Extract G12 from the block (same as global since g is block diagonal)
+    DataType G12 = g(blkOffset + idxA_local, blkOffset + idxB_local);
+    DataType X = 2.0 * (double)s + G12;
+
+    DataType D = 1.0 + X * X;
+    DataType invD = 1.0 / D;
+
+    DataType M00 = invD;
+    DataType M01 = -X * invD;
+    DataType M10 = X * invD;
+    DataType M11 = invD;
+
+    // c = 2e - g.col
+    cVecType c0 = -g.col(blkOffset + idxA_local).segment(blkOffset, blkSize);
+    c0(idxA_local) += 2.0;
+
+    cVecType c1 = -g.col(blkOffset + idxB_local).segment(blkOffset, blkSize);
+    c1(idxB_local) += 2.0;
+
+    cVecType u0 = c0 * M00 + c1 * M10;
+    cVecType u1 = c0 * M01 + c1 * M11;
+
+    // Update the block: G_block += U * V^T
+    // We use zgeru for rank-1 updates: A := alpha * x * y^T + A
+    // G_block += u0 * c0^T + u1 * c1^T
+    DataType alpha = 1.0;
+    zgeru(&blkSize, &blkSize, &alpha, u0.data(), &inc, c0.data(), &inc, g_block_ptr, &nDim);
+    zgeru(&blkSize, &blkSize, &alpha, u1.data(), &inc, c1.data(), &inc, g_block_ptr, &nDim);
+
+    // Flip the spin
+    sigma[p][m] = -s;
+  }
+
+  // --- Update Logic ---
+  // Returns the sign change of the weight
+  DataType update(MatType &g) override {
+    DataType signRatio = 1.0;
+
+    // Loop over all pairs and all modes
+    for (int p = 0; p < nReplicas / 2; ++p) {
+      for (int m = 0; m < nDimSingle; ++m) {
+        DataType r = getRatio(g, p, m);
+
+        // Metropolis check
+        double prob = std::abs(r);
+        double rand_val = rd->rdUniform01();
+        total++;
+
+        if (rand_val < prob) {
+          accepted++;
+          localUpdate(g, p, m);
+          signRatio *= (r / prob);
         }
+      }
     }
 
-    // B = A * Op
-    void right_multiply(const MatType &A, MatType &B) override {
-        for(int p=0; p < nReplicas/2; ++p) {
-            int rA = 2*p;
-            int rB = 2*p+1;
-            int offsetA = rA * nDimSingle;
-            int offsetB = rB * nDimSingle;
-            
-            if(is_swapped[p]) {
-                // Col rA in B comes from Col rB in A
-                B.block(0, offsetA, A.rows(), nDimSingle) = A.block(0, offsetB, A.rows(), nDimSingle);
-                // Col rB in B comes from Col rA in A
-                B.block(0, offsetB, A.rows(), nDimSingle) = A.block(0, offsetA, A.rows(), nDimSingle);
-            } else {
-                B.block(0, offsetA, A.rows(), nDimSingle) = A.block(0, offsetA, A.rows(), nDimSingle);
-                B.block(0, offsetB, A.rows(), nDimSingle) = A.block(0, offsetB, A.rows(), nDimSingle);
-            }
-        }
-    }
+    return signRatio;
+  }
 
-    // Since S = S^{-1} = S^T, inverse and adjoint are the same as the operator itself.
-    void inv_left_multiply(const MatType &A, MatType &B) override { left_multiply(A, B); }
-    void adjoint_left_multiply(const MatType &A, MatType &B) override { left_multiply(A, B); }
-    void inv_right_multiply(const MatType &A, MatType &B) override { right_multiply(A, B); }
-    void adjoint_inv_right_multiply(const MatType &A, MatType &B) override { right_multiply(A, B); }
+  void getGreensMat(MatType &g0) override {
+    // Not used in this context
+  }
 
-    // Propagate: g = Op * g * Op^{-1}
-    // Since Op = Op^{-1}, g = S * g * S.
-    // This swaps both rows and columns.
-    void left_propagate(MatType &g, MatType &gTmp) override {
-        // gTmp = S * g
-        left_multiply(g, gTmp);
-        // g = gTmp * S
-        right_multiply(gTmp, g);
-    }
-
-    void right_propagate(MatType &g, MatType &gTmp) override {
-        // Same as left_propagate because S = S^{-1}
-        left_propagate(g, gTmp);
-    }
-
-    // Stabilized multiply for UDT
-    void stabilizedLeftMultiply(UDT &F) override {
-        if (F.isBlock) {
-            // Handle block UDT
-            // We assume the block structure aligns with the mixing operator's structure.
-            // Specifically, for 4 replicas and nBlocks=2, each block contains a pair of replicas (0,1) and (2,3).
-            // The mixing operator swaps replicas within each pair.
-            
-            for (size_t b = 0; b < F.blocks.size(); b++) {
-                // Assuming 1 pair per block for now (consistent with nBlocks=2 for 4 replicas)
-                int p = b; 
-                if (p < is_swapped.size() && is_swapped[p]) {
-                    MatType& U = F.blocks[b].U;
-                    int halfSize = U.rows() / 2;
-                    // Swap top and bottom halves of U
-                    for (int i = 0; i < halfSize; i++) {
-                        U.row(i).swap(U.row(i + halfSize));
-                    }
-                }
-            }
-        } else {
-            // F = S * F
-            // We can just swap rows in F.U
-            MatType U_new = F.U; // Copy
-            left_multiply(F.U, U_new);
-            F.U = U_new;
-        }
-    }
-
-    // --- Update Logic ---
-
-    // Returns the sign change of the weight
-    DataType update(MatType &g) override {
-        DataType signRatio = 1.0;
-        
-        for (int p = 0; p < nReplicas / 2; ++p) {
-            // Propose flip
-            // The update kernel K for switching between I and S (or S and I) is:
-            // K = S_{sub} (I_{sub} - G_{sub}) + G_{sub}
-            // where sub refers to the 2N x 2N block for the pair.
-            
-            int rA = 2 * p;
-            int rB = 2 * p + 1;
-            int offsetA = rA * nDimSingle;
-            int offsetB = rB * nDimSingle;
-            int N = nDimSingle;
-
-            // Extract G blocks
-            MatType G_AA = g.block(offsetA, offsetA, N, N);
-            MatType G_AB = g.block(offsetA, offsetB, N, N);
-            MatType G_BA = g.block(offsetB, offsetA, N, N);
-            MatType G_BB = g.block(offsetB, offsetB, N, N);
-            
-            MatType I = MatType::Identity(N, N);
-            
-            // Construct K matrix (2N x 2N)
-            // K = [ G_AA - G_BA,       I - G_BB + G_AB ]
-            //     [ I - G_AA + G_BA,   G_BB - G_AB     ]
-            MatType K(2*N, 2*N);
-            K.topLeftCorner(N, N) = G_AA - G_BA;
-            K.topRightCorner(N, N) = I - G_BB + G_AB;
-            K.bottomLeftCorner(N, N) = I - G_AA + G_BA;
-            K.bottomRightCorner(N, N) = G_BB - G_AB;
-            
-            // Calculate determinant (ratio)
-            DataType r = K.determinant();
-            
-            // Metropolis check
-            double prob = std::abs(r);
-            double rand_val = rd->rdUniform01();
-            
-            if (rand_val < prob) {
-                // Accept
-                is_swapped[p] = !is_swapped[p];
-                signRatio *= (r / prob); // Phase change
-                
-                // Update Green's function
-                // G' = G - L K^{-1} R
-                
-                MatType K_inv = K.inverse();
-                
-                // Construct L (N_total x 2N)
-                // L = (I - G) restricted to columns rA, rB.
-                // L = -G_cols except diagonal elements +1.
-                MatType L(nDim, 2*N);
-                L.leftCols(N) = -g.block(0, offsetA, nDim, N);
-                L.rightCols(N) = -g.block(0, offsetB, nDim, N);
-                
-                // Add Identity to diagonal parts of L
-                for(int i=0; i<N; ++i) {
-                    L(offsetA + i, i) += 1.0;
-                    L(offsetB + i, N + i) += 1.0;
-                }
-                
-                // Construct R (2N x N_total)
-                // R = [ -G_A + G_B ]
-                //     [  G_A - G_B ]
-                MatType R(2*N, nDim);
-                R.topRows(N) = -g.block(offsetA, 0, N, nDim) + g.block(offsetB, 0, N, nDim);
-                R.bottomRows(N) = g.block(offsetA, 0, N, nDim) - g.block(offsetB, 0, N, nDim);
-                
-                // Update G
-                g -= L * K_inv * R;
-            }
-        }
-        
-        return signRatio;
-    }
-
-    void getGreensMat(MatType &g0) override {
-        // Not used in this context
-    }
-    
-    DataType getSignOfWeight() override {
-        return 1.0;
-    }
+  DataType getSignOfWeight() override { return 1.0; }
 };
 
-// Trivial Swap Operator: Always swaps pairs (0,1), (2,3), etc.
+// Trivial Swap Operator: Identity operator (no swaps)
+// Used to verify multi-replica implementation matches single replica
 class TrivialSwapOperator : public MixingOperator {
 public:
-    TrivialSwapOperator(int _nReplicas, int _nDimSingle, rdGenerator* _rd)
-        : MixingOperator(_nReplicas, _nDimSingle, _rd) {
-        // Set all to false (Identity) to verify no mixing
-        std::fill(is_swapped.begin(), is_swapped.end(), false);
-    }
+  TrivialSwapOperator(int _nReplicas, int _nDimSingle, rdGenerator *_rd)
+      : MixingOperator(_nReplicas, _nDimSingle, _rd) {
+    // Initialize sigma to all 1 (Identity)
+    // B(1) = 1/sqrt(2) * [1, 1; -1, 1] ... Wait.
+    // Trivial operator should be Identity.
+    // But our B(s) is never Identity!
+    // B(s) is always a rotation by pi/4.
+    // The "TrivialSwapOperator" was intended to be Identity.
+    // If we want Identity, we need a different class or different logic.
+    // But MixingOperator enforces the Sqrt-Swap form.
+    // So TrivialSwapOperator cannot inherit from MixingOperator if it wants to
+    // be Identity unless we change left_multiply to support Identity. But
+    // MixingOperator is specifically for the Swap operator. So
+    // TrivialSwapOperator is probably not applicable here anymore if we enforce
+    // the form. Let's just make it do nothing in multiply?
+  }
 
-    DataType update(MatType &g) override {
-        // Do nothing, keep swapped
-        return 1.0;
-    }
+  // Override multiply to do nothing
+  void left_multiply(const MatType &A, MatType &B) override { B = A; }
+  void right_multiply(const MatType &A, MatType &B) override { B = A; }
+  void inv_left_multiply(const MatType &A, MatType &B) override { B = A; }
+  void inv_right_multiply(const MatType &A, MatType &B) override { B = A; }
+  void stabilizedLeftMultiply(UDT &F) override {
+    // Do nothing
+  }
+
+  DataType update(MatType &g) override { return 1.0; }
 };
 
 #endif // MIXING_OPERATOR_H

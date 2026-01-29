@@ -37,9 +37,16 @@ public:
         int curSeg = 0;
         
         // Apply mixing operator first if it exists
-        if (mixingOp != nullptr) {
-            // apply swap operator here
-            // to a 2*2 block
+        UDT mixUDT;
+        bool hasMix = (mixingOp != nullptr);
+        if (hasMix) {
+            mixingOp->left_multiply(Aseg, tmp);
+            std::swap(Aseg, tmp);
+            
+            // Immediate UDT
+            int nBlocks = (nReplicas > 1) ? 2 : 1;
+            mixUDT = UDT(Aseg, nBlocks);
+            Aseg = MatType::Identity(nDim, nDim);
         }
 
         for (int l = 0; l < op_length; l++)
@@ -56,6 +63,7 @@ public:
                         nBlocks = (mixingOp != nullptr) ? 2 : nReplicas;
                     }
                     udtR[curSeg] = UDT(Aseg, nBlocks); // TODO: performance check
+                    if (hasMix) udtR[curSeg] = udtR[curSeg] * mixUDT;
                 }
                 else
                 {
@@ -80,7 +88,8 @@ public:
             
             // Apply mixing operator at l=0 (end of time evolution in this direction)
             if (l == 0 && mixingOp != nullptr) {
-                // to apply swap operator
+                mixingOp->right_multiply(Aseg, tmp);
+                std::swap(Aseg, tmp);
             }
 
             if (need_stabilization[l])
