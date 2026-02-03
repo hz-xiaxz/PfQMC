@@ -105,6 +105,22 @@ public:
     F.U = U_new;
   }
 
+  // Propagate methods
+  // For B = i sigma tau_y, B^{-1} = -B.
+  // G' = B G B^{-1} = - B G B
+  void left_propagate(MatType &g, MatType &gTmp) override {
+      left_multiply(g, gTmp);   // gTmp = B * g
+      right_multiply(gTmp, g);  // g = B * g * B
+      g *= -1.0;                // g = - B * g * B
+  }
+
+  void right_propagate(MatType &g, MatType &gTmp) override {
+      // G' = B^{-1} G B = - B G B
+      left_multiply(g, gTmp);   // gTmp = B * g
+      right_multiply(gTmp, g);  // g = B * g * B
+      g *= -1.0;                // g = - B * g * B
+  }
+
   // Calculate ratio for flipping sigma[p][m]
   DataType getRatio(MatType &g, int p, int m) {
     int offsetA = 2 * p * nDimSingle;
