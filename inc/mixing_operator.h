@@ -109,7 +109,8 @@ public:
   DataType getRatio(MatType &g, int p, int m) {
     int offsetA = 2 * p * nDimSingle;
     int offsetB = (2 * p + 1) * nDimSingle;
-    int s = sigma[p][m]; // Current state
+    int parity = (p % 2 == 0) ? 1 : -1;
+    int s = sigma[p][m] * parity; // Current state with parity
 
     // Extract G_12 (element connecting mode m of replica 1 and 2)
     int idxA = offsetA + m;
@@ -137,7 +138,8 @@ public:
     int idxA_local = m;
     int idxB_local = nDimSingle + m;
 
-    int s = sigma[p][m];
+    int parity = (p % 2 == 0) ? 1 : -1;
+    int s = sigma[p][m] * parity;
 
     // Extract G12 from the block (same as global since g is block diagonal)
     DataType G12 = g(blkOffset + idxA_local, blkOffset + idxB_local);
