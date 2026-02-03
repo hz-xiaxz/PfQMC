@@ -41,11 +41,11 @@ public:
   // Note: A and B are nDim × nDim matrices (block-diagonal with 2N×2N blocks
   // per pair) The SWAP only acts on each 2N×2N diagonal block independently
 
-  // Apply the operator matrix: B = S * A
-  // S = 1/sqrt(2) * (I + sigma * J)
-  // J = [0, 1; -1, 0]
+  // Apply the operator matrix: B = Op * A
+  // NEW DEFINITION: B = i * sigma * tau_y
+  // tau_y = [0, -i; i, 0]
+  // B = sigma * [0, 1; -1, 0]
   void left_multiply(const MatType &A, MatType &B) override {
-    DataType factor = 1.0 / std::sqrt(2.0);
     for (int p = 0; p < nReplicas / 2; ++p) {
       int offsetA = 2 * p * nDimSingle;       // row offset for replica α
       int offsetB = (2 * p + 1) * nDimSingle; // row offset for replica β
@@ -54,26 +54,21 @@ public:
 
       for (int m = 0; m < nDimSingle; ++m) {
         int s = sigma[p][m];
-        // S * A = 1/sqrt(2) * (A + s * J * A)
-        // J * A: row_α ← row_β, row_β ← -row_α
-        // row_α_new = factor * (row_α + s * row_β)
-        // row_β_new = factor * (row_β - s * row_α)
+        // B * A = s * [0, 1; -1, 0] * [row_α; row_β]
+        // row_α_new = s * row_β
+        // row_β_new = -s * row_α
 
         B.row(offsetA + m).segment(blockCol, 2 * nDimSingle) =
-            factor *
-            (A.row(offsetA + m).segment(blockCol, 2 * nDimSingle) +
-             (double)s * A.row(offsetB + m).segment(blockCol, 2 * nDimSingle));
+            (double)s * A.row(offsetB + m).segment(blockCol, 2 * nDimSingle);
+
         B.row(offsetB + m).segment(blockCol, 2 * nDimSingle) =
-            factor *
-            (A.row(offsetB + m).segment(blockCol, 2 * nDimSingle) -
-             (double)s * A.row(offsetA + m).segment(blockCol, 2 * nDimSingle));
+            -(double)s * A.row(offsetA + m).segment(blockCol, 2 * nDimSingle);
       }
     }
   }
 
   // B = A * S
   void right_multiply(const MatType &A, MatType &B) override {
-    DataType factor = 1.0 / std::sqrt(2.0);
     for (int p = 0; p < nReplicas / 2; ++p) {
       int offsetA = 2 * p * nDimSingle;
       int offsetB = (2 * p + 1) * nDimSingle;
@@ -81,78 +76,18 @@ public:
 
       for (int m = 0; m < nDimSingle; ++m) {
         int s = sigma[p][m];
-        // A * S = 1/sqrt(2) * (A + s * A * J)
-        // A * J: col_α ← -col_β, col_β ← col_α
-        // col_α_new = factor * (col_α - s * col_β)
-        // col_β_new = factor * (col_β + s * col_α)
+        // A * B = [col_α, col_β] * s * [0, 1; -1, 0]
+        // col_α_new = -s * col_β
+        // col_β_new = s * col_α
 
         B.col(offsetA + m).segment(blockRow, 2 * nDimSingle) =
-            factor *
-            (A.col(offsetA + m).segment(blockRow, 2 * nDimSingle) -
-             (double)s * A.col(offsetB + m).segment(blockRow, 2 * nDimSingle));
+            -(double)s * A.col(offsetB + m).segment(blockRow, 2 * nDimSingle);
+
         B.col(offsetB + m).segment(blockRow, 2 * nDimSingle) =
-            factor *
-            (A.col(offsetB + m).segment(blockRow, 2 * nDimSingle) +
-             (double)s * A.col(offsetA + m).segment(blockRow, 2 * nDimSingle));
+            (double)s * A.col(offsetA + m).segment(blockRow, 2 * nDimSingle);
       }
     }
   }
-
-  // B = S^{-1} * A
-  // S^{-1} = 1/sqrt(2) * (I - sigma * J)
-  void inv_left_multiply(const MatType &A, MatType &B) override {
-    DataType factor = 1.0 / std::sqrt(2.0);
-    for (int p = 0; p < nReplicas / 2; ++p) {
-      int offsetA = 2 * p * nDimSingle;
-      int offsetB = (2 * p + 1) * nDimSingle;
-      int blockCol = 2 * p * nDimSingle;
-
-      for (int m = 0; m < nDimSingle; ++m) {
-        int s = sigma[p][m];
-        // S^{-1} * A = 1/sqrt(2) * (A - s * J * A)
-        // J * A: row_α ← row_β, row_β ← -row_α
-        // row_α_new = factor * (row_α - s * row_β)
-        // row_β_new = factor * (row_β + s * row_α)
-
-        B.row(offsetA + m).segment(blockCol, 2 * nDimSingle) =
-            factor *
-            (A.row(offsetA + m).segment(blockCol, 2 * nDimSingle) -
-             (double)s * A.row(offsetB + m).segment(blockCol, 2 * nDimSingle));
-        B.row(offsetB + m).segment(blockCol, 2 * nDimSingle) =
-            factor *
-            (A.row(offsetB + m).segment(blockCol, 2 * nDimSingle) +
-             (double)s * A.row(offsetA + m).segment(blockCol, 2 * nDimSingle));
-      }
-    }
-  }
-
-  // B = A * S^{-1}
-  void inv_right_multiply(const MatType &A, MatType &B) override {
-    DataType factor = 1.0 / std::sqrt(2.0);
-    for (int p = 0; p < nReplicas / 2; ++p) {
-      int offsetA = 2 * p * nDimSingle;
-      int offsetB = (2 * p + 1) * nDimSingle;
-      int blockRow = 2 * p * nDimSingle;
-
-      for (int m = 0; m < nDimSingle; ++m) {
-        int s = sigma[p][m];
-        // A * S^{-1} = 1/sqrt(2) * (A - s * A * J)
-        // A * J: col_α ← -col_β, col_β ← col_α
-        // col_α_new = factor * (col_α + s * col_β)
-        // col_β_new = factor * (col_β - s * col_α)
-
-        B.col(offsetA + m).segment(blockRow, 2 * nDimSingle) =
-            factor *
-            (A.col(offsetA + m).segment(blockRow, 2 * nDimSingle) +
-             (double)s * A.col(offsetB + m).segment(blockRow, 2 * nDimSingle));
-        B.col(offsetB + m).segment(blockRow, 2 * nDimSingle) =
-            factor *
-            (A.col(offsetB + m).segment(blockRow, 2 * nDimSingle) -
-             (double)s * A.col(offsetA + m).segment(blockRow, 2 * nDimSingle));
-      }
-    }
-  }
-
 
   // Stabilized multiply for UDT
   void stabilizedLeftMultiply(UDT &F) override {
@@ -187,7 +122,7 @@ public:
   void localUpdate(MatType &g, int p, int m) {
     int blkOffset = 2 * p * nDimSingle;
     int blkSize = 2 * nDimSingle;
-    DataType* g_block_ptr = g.data() + blkOffset + blkOffset * nDim;
+    DataType *g_block_ptr = g.data() + blkOffset + blkOffset * nDim;
     int inc = 1;
 
     // We only work on the block starting at blkOffset
@@ -223,8 +158,10 @@ public:
     // We use zgeru for rank-1 updates: A := alpha * x * y^T + A
     // G_block += u0 * c0^T + u1 * c1^T
     DataType alpha = 1.0;
-    zgeru(&blkSize, &blkSize, &alpha, u0.data(), &inc, c0.data(), &inc, g_block_ptr, &nDim);
-    zgeru(&blkSize, &blkSize, &alpha, u1.data(), &inc, c1.data(), &inc, g_block_ptr, &nDim);
+    zgeru(&blkSize, &blkSize, &alpha, u0.data(), &inc, c0.data(), &inc,
+          g_block_ptr, &nDim);
+    zgeru(&blkSize, &blkSize, &alpha, u1.data(), &inc, c1.data(), &inc,
+          g_block_ptr, &nDim);
 
     // Flip the spin
     sigma[p][m] = -s;
@@ -260,6 +197,7 @@ public:
     // Not used in this context
   }
 
+  // this is not correct yet
   DataType getSignOfWeight() override { return 1.0; }
 };
 

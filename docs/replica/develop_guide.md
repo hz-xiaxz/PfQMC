@@ -8,12 +8,13 @@ This guide documents the implementation of the Mixing Operator (Swap Operator) f
 *   **Issue**: The original implementation of `right_multiply` and `inv_right_multiply` had swapped logic for $S$ and $S^{-1}$.
 *   **Fix**: Corrected the matrix multiplication logic to ensure consistency with $B = A \times S$ and $B = A \times S^{-1}$.
 
-### 1.2 Sqrt-Swap Matrix Implementation
-*   **Context**: The operator is defined as $\mathcal{S} = \exp(\frac{\pi}{4} \sigma_m \psi^\alpha \psi^\beta)$, which corresponds to the "Sqrt-Swap" gate.
-*   **Matrix Representation**: The single-particle matrix representation is:
-    $$ B = \frac{1}{\sqrt{2}} (I + \sigma_m J) = \frac{1}{\sqrt{2}} \begin{pmatrix} 1 & \sigma_m \\ -\sigma_m & 1 \end{pmatrix} $$
-    where $J = \begin{pmatrix} 0 & 1 \\ -1 & 0 \end{pmatrix}$.
-*   **Affected Functions**: `left_multiply`, `right_multiply`, `inv_left_multiply`, `inv_right_multiply`.
+### 1.2 Direct Swap Matrix Implementation
+*   **Context**: The operator is updated to be a direct swap in imaginary time, represented by $B = i \sigma_m \tau_y$.
+*   **Matrix Representation**:
+    $$ B = \sigma_m \begin{pmatrix} 0 & 1 \\ -1 & 0 \end{pmatrix} $$
+    This operator swaps the replicas with a sign change.
+*   **Skew-Symmetry**: Unlike the previous "Sqrt-Swap" ($\pi/4$ rotation), this operator is a **monomial matrix** (signed permutation). It preserves the skew-symmetry of the Green's function ($G^T = -G$) during propagation ($G' = B G B$).
+*   **Affected Functions**: `left_multiply`, `right_multiply`. The superposition factors ($1/\sqrt{2}$) were removed.
 
 ### 1.3 Independent Auxiliary Fields
 *   **Change**: Replaced the global `is_swapped` flag (which applied to an entire replica pair) with fine-grained auxiliary fields `sigma[p][m]`.
