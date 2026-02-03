@@ -29,7 +29,12 @@ public:
       sigma[p].resize(nDimSingle);
       for (int m = 0; m < nDimSingle; ++m) {
         // Initialize randomly +1 or -1
-        sigma[p][m] = (rd->rdUniform01() < 0.5) ? 1 : -1;
+        // Ensure all pairs have the same sigma
+        if (p == 0) {
+          sigma[p][m] = (rd->rdUniform01() < 0.5) ? 1 : -1;
+        } else {
+          sigma[p][m] = sigma[0][m];
+        }
       }
     }
   }
@@ -52,8 +57,9 @@ public:
       int blockCol =
           2 * p * nDimSingle; // column offset for this pair's 2N block
 
+      int parity = (p % 2 == 0) ? 1 : -1;
       for (int m = 0; m < nDimSingle; ++m) {
-        int s = sigma[p][m];
+        int s = sigma[p][m] * parity;
         // B * A = s * [0, 1; -1, 0] * [row_α; row_β]
         // row_α_new = s * row_β
         // row_β_new = -s * row_α
@@ -74,8 +80,9 @@ public:
       int offsetB = (2 * p + 1) * nDimSingle;
       int blockRow = 2 * p * nDimSingle; // row offset for this pair's 2N block
 
+      int parity = (p % 2 == 0) ? 1 : -1;
       for (int m = 0; m < nDimSingle; ++m) {
-        int s = sigma[p][m];
+        int s = sigma[p][m] * parity;
         // A * B = [col_α, col_β] * s * [0, 1; -1, 0]
         // col_α_new = -s * col_β
         // col_β_new = s * col_α
