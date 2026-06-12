@@ -2,7 +2,7 @@
 #include <omp.h>
 #include <string.h>
 #include <fstream>
-
+#include <iomanip> // 必须包含这个头文件
 #include "inc/honeycomb.h"
 #include "inc/pfqmc.h"
 #include "inc/square.h"
@@ -298,7 +298,7 @@ int main_chain(int Lx, int LTau, double dt, double V, double delta,int nthreads,
         config.StructureFactorCDWFFT(pfqmc.g, obsCDWFT);
 
         // ------------- output each iteration -----------
-        fout << "iter = " << i << " sign = " << sign << " z2 = " << obsZ2 << " edgeCorrelator = " << obsEdgeCorrelator << " edgeZ2Correlator = " << obsEdgeCorrelatorZ2 << " CDW = " << structureFactorCDW << " CDWq = " << structureFactorCDWq << std::endl;
+        fout << "iter = " << i << " sign = " << sign <<std::fixed << std::setprecision(15) << " z2 = " << obsZ2 << " edgeCorrelator = " << obsEdgeCorrelator << " edgeZ2Correlator = " << obsEdgeCorrelatorZ2 << " CDW = " << structureFactorCDW << " CDWq = " << structureFactorCDWq << std::endl;
 
         // ------------- end of output each iteration ----
 

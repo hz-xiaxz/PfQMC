@@ -1,0 +1,14 @@
+[project]
+name = "ed"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "matplotlib>=3.10.7",
+    "quspin>=1.0.0",
+]
+
+[tool.uv]
+# 将默认 PyPI 源替换为清华源
+index-url = "https://pypi.tuna.tsinghua.edu.cn/simple"

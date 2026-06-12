@@ -1,0 +1,19 @@
+CompileFlags:
+  Add:
+    - -std=c++17
+    - -Iinc
+    - -I/opt/intel/oneapi/mkl/latest/include
+    - -I/opt/intel/oneapi/compiler/latest/include
+    - -I/opt/intel/oneapi/compiler/latest/include/sycl
+    - -DMKL_ILP64=0
+    
+    # --- 修正了下面这一行 ---
+    # 假设 'Eigen' 文件夹直接位于 /home/hzxiaxz/eigen-5.0.0 下面
+    - -I/home/hzxiaxz/eigen-5.0.0
+    # -----------------------
+
+  Remove:
+    - -fp-model=precise
+    - -fsycl-unnamed-lambda
+    - -fimf-arch-consistency=true
+    - -no-fma
